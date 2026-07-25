@@ -21,6 +21,7 @@ class Hub:
     def __init__(self, store) -> None:
         self.store = store
         self._last_seen: dict = {}    # room -> {peer: monotonic ts}
+        self._status: dict = {}       # room -> {peer: {"state": str | None, "note": str | None}}
         self._waiters: dict = {}      # room -> list[asyncio.Event]
         self._post_times: dict = {}   # rate-limit key -> list[monotonic ts]
 
@@ -33,12 +34,43 @@ class Hub:
         seen[peer] = time.monotonic()
         return is_new
 
+    def set_status(self, room: str, peer: str, *, state: str | None, note: str | None,
+                    state_provided: bool, note_provided: bool) -> None:
+        """Write a status update. `state_provided`/`note_provided` distinguish 'key
+        absent from the request' (leave alone) from 'key sent as null' (clear) —
+        POST /presence's absent-vs-null contract. A bare heartbeat (neither
+        provided) never allocates an entry."""
+        if not (state_provided or note_provided):
+            return
+        entry = self._status.setdefault(room, {}).setdefault(peer, {"state": None, "note": None})
+        if state_provided:
+            entry["state"] = state
+        if note_provided:
+            entry["note"] = note
+
+    def status_for(self, room: str, peer: str) -> dict:
+        """A single peer's status, with staleness derived the same way peers() does."""
+        now = time.monotonic()
+        seen = self._last_seen.get(room, {}).get(peer)
+        online = seen is not None and (now - seen) <= ONLINE_WINDOW_SECONDS
+        entry = self._status.get(room, {}).get(peer, {})
+        return {"status": entry.get("state"), "status_note": entry.get("note"), "status_stale": not online}
+
     def peers(self, room: str) -> list:
         now = time.monotonic()
         out = []
         for name, seen in sorted(self._last_seen.get(room, {}).items()):
             ago = now - seen
-            out.append({"name": name, "online": ago <= ONLINE_WINDOW_SECONDS, "seconds_since_seen": round(ago, 1)})
+            online = ago <= ONLINE_WINDOW_SECONDS
+            status = self._status.get(room, {}).get(name, {})
+            out.append({
+                "name": name,
+                "online": online,
+                "seconds_since_seen": round(ago, 1),
+                "status": status.get("state"),
+                "status_note": status.get("note"),
+                "status_stale": not online,
+            })
         return out
 
     def all_peers(self) -> dict:

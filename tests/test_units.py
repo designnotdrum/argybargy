@@ -10,7 +10,7 @@ import pytest
 from argybargy.audit import AuditLog
 from argybargy.auth import CodeStore
 from argybargy.db import connect
-from argybargy.hub import Hub
+from argybargy.hub import ONLINE_WINDOW_SECONDS, Hub
 from argybargy.settings import Settings, _bool, _int, _list
 from argybargy.store import MessageStore
 from argybargy.util import parse_expires
@@ -293,6 +293,43 @@ def test_touch_reports_first_sighting(tmp_path):
     hub = Hub(MessageStore(tmp_path / "touch.db"))
     assert hub.touch("r", "alice") is True
     assert hub.touch("r", "alice") is False
+
+
+def test_hub_set_status_absent_vs_null_vs_value(tmp_path):
+    h = Hub(MessageStore(tmp_path / "m4.db"))
+    h.touch("r", "x")
+
+    # never set: defaults to None
+    assert h.peers("r")[0]["status"] is None
+    assert h.peers("r")[0]["status_note"] is None
+
+    # provided: sets a value
+    h.set_status("r", "x", state="working", note="on it", state_provided=True, note_provided=True)
+    assert h.peers("r")[0]["status"] == "working"
+    assert h.peers("r")[0]["status_note"] == "on it"
+
+    # absent (not provided): leaves it unchanged
+    h.set_status("r", "x", state=None, note=None, state_provided=False, note_provided=False)
+    assert h.peers("r")[0]["status"] == "working"
+    assert h.peers("r")[0]["status_note"] == "on it"
+
+    # explicit null: clears it
+    h.set_status("r", "x", state=None, note=None, state_provided=True, note_provided=True)
+    assert h.peers("r")[0]["status"] is None
+    assert h.peers("r")[0]["status_note"] is None
+
+
+def test_offline_peer_status_renders_stale(tmp_path):
+    h = Hub(MessageStore(tmp_path / "m3.db"))
+    h.touch("r", "x")
+    h.set_status("r", "x", state="working", note="on it", state_provided=True, note_provided=True)
+    h._last_seen["r"]["x"] = time.monotonic() - (ONLINE_WINDOW_SECONDS + 5)
+
+    peers = h.peers("r")
+    assert peers[0]["online"] is False
+    assert peers[0]["status"] == "working"
+    assert peers[0]["status_note"] == "on it"
+    assert peers[0]["status_stale"] is True
 
 
 # ---------------------------------------------------------------------- util
