@@ -224,3 +224,68 @@ def test_presence_body_validates_state_enum_and_note_length():
 
     with pytest.raises(ValidationError):
         PresenceBody(note="x" * (settings.status_note_max + 1))
+
+
+def test_presence_bare_heartbeat_touches_only(client, make_code):
+    code, auth = make_code("beat")
+    r = client.post("/presence", headers=auth)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True and body["status"] is None and body["status_note"] is None
+    peers = client.get("/peers", headers=auth).json()["peers"]
+    me = next(p for p in peers if p["name"] == "beat")
+    assert me["online"] is True and me["status"] is None
+
+
+def test_presence_sets_status_and_note(client, make_code):
+    code, auth = make_code("worker1")
+    r = client.post("/presence", headers=auth, json={"state": "working", "note": "reviewing PR #2"})
+    assert r.status_code == 200
+    assert r.json()["status"] == "working" and r.json()["status_note"] == "reviewing PR #2"
+    peers = client.get("/peers", headers=auth).json()["peers"]
+    me = next(p for p in peers if p["name"] == "worker1")
+    assert me["status"] == "working" and me["status_note"] == "reviewing PR #2"
+
+
+def test_presence_absent_field_leaves_status_unchanged(client, make_code):
+    code, auth = make_code("worker2")
+    client.post("/presence", headers=auth, json={"state": "blocked", "note": "waiting on auth"})
+    r = client.post("/presence", headers=auth, json={})
+    assert r.status_code == 200
+    assert r.json()["status"] == "blocked" and r.json()["status_note"] == "waiting on auth"
+
+
+def test_presence_null_clears_status(client, make_code):
+    code, auth = make_code("worker3")
+    client.post("/presence", headers=auth, json={"state": "idle", "note": "ready"})
+    r = client.post("/presence", headers=auth, json={"state": None})
+    assert r.status_code == 200
+    assert r.json()["status"] is None
+    peers = client.get("/peers", headers=auth).json()["peers"]
+    me = next(p for p in peers if p["name"] == "worker3")
+    assert me["status"] is None
+
+
+def test_presence_invalid_state_rejected(client, make_code):
+    code, auth = make_code("worker4")
+    r = client.post("/presence", headers=auth, json={"state": "done"})
+    assert r.status_code == 422
+
+
+def test_presence_note_over_max_length_rejected(client, make_code):
+    code, auth = make_code("worker5")
+    over = "x" * (settings.status_note_max + 1)
+    r = client.post("/presence", headers=auth, json={"note": over})
+    assert r.status_code == 422
+
+
+def test_presence_rate_limited_429(client, make_code):
+    code, auth = make_code("flapper")
+    last = None
+    for i in range(settings.status_rate_max + 3):
+        last = client.post("/presence", headers=auth, json={"state": "working", "note": f"tick {i}"})
+        if last.status_code == 429:
+            break
+    assert last.status_code == 429
+    assert last.headers.get("Retry-After")
+    assert last.json()["detail"]["error"] == "rate_limited"

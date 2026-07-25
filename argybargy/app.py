@@ -293,6 +293,30 @@ async def history(peer: Peer = Depends(require_peer), limit: int = Query(default
     return {"room": peer.room, "messages": await hub.history(peer.room, min(limit, settings.max_history))}
 
 
+@app.post("/presence")
+async def presence(body: PresenceBody | None = None, peer: Peer = Depends(require_peer)) -> dict:
+    _touch(peer)
+    if not hub.allow(f"status:{peer.code}", settings.status_rate_max, settings.status_rate_window):
+        raise HTTPException(
+            status_code=429,
+            detail={"error": "rate_limited",
+                    "detail": f"Max {settings.status_rate_max} presence calls per {int(settings.status_rate_window)}s. Slow down.",
+                    "retry_after": int(settings.status_rate_window)},
+            headers={"Retry-After": str(int(settings.status_rate_window))},
+        )
+    fields_set = body.model_fields_set if body is not None else set()
+    hub.set_status(
+        peer.room, peer.name,
+        state=body.state if body else None,
+        note=body.note if body else None,
+        state_provided="state" in fields_set,
+        note_provided="note" in fields_set,
+    )
+    current = hub.status_for(peer.room, peer.name)
+    return {"ok": True, "online_window": settings.online_window,
+            "status": current["status"], "status_note": current["status_note"]}
+
+
 # ----- admin: dashboard + management -----
 
 @app.get("/dashboard", response_class=HTMLResponse)
