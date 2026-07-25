@@ -235,7 +235,8 @@ def health() -> dict:
 @app.get("/whoami")
 async def whoami(peer: Peer = Depends(require_peer)) -> dict:
     _touch(peer)
-    return {"name": peer.name, "room": peer.room, "capabilities": peer.capabilities}
+    status = hub.status_for(peer.room, peer.name)
+    return {"name": peer.name, "room": peer.room, "capabilities": peer.capabilities, **status}
 
 
 @app.get("/peers")

@@ -42,7 +42,10 @@ def test_invite_mints_working_key_with_room_and_capabilities(client, admin_heade
     body = r.json()
     code = body["code"]
     me = client.get("/whoami", headers={"Authorization": f"Bearer {code}"}).json()
-    assert me == {"name": "carol", "room": "sales", "capabilities": "researcher"}
+    assert me == {
+        "name": "carol", "room": "sales", "capabilities": "researcher",
+        "status": None, "status_note": None, "status_stale": False,
+    }
     client.post("/admin/revoke", headers=admin_headers, json={"target": "carol"})
 
 
@@ -88,6 +91,15 @@ def test_admin_state_shape(client, admin_headers):
     assert body["version"] == VERSION
     assert isinstance(body["peers"], dict)
     assert isinstance(body["codes"], list)
+
+
+def test_admin_state_includes_status(client, admin_headers, make_code):
+    code, auth = make_code("adminview")
+    client.post("/presence", headers=auth, json={"state": "idle", "note": "free"})
+    state = client.get("/admin/state", headers=admin_headers).json()
+    room_peers = state["peers"]["default"]
+    me = next(p for p in room_peers if p["name"] == "adminview")
+    assert me["status"] == "idle" and me["status_note"] == "free"
 
 
 def test_admin_stats_counts(client, admin_headers):

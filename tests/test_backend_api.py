@@ -52,7 +52,8 @@ def test_bare_code_without_bearer_prefix_is_accepted(client, make_code):
 def test_whoami_returns_identity_and_capabilities(client, make_code):
     _, auth = make_code("cap-agent", capabilities="reads QB; runs SQL")
     assert client.get("/whoami", headers=auth).json() == {
-        "name": "cap-agent", "room": "default", "capabilities": "reads QB; runs SQL"
+        "name": "cap-agent", "room": "default", "capabilities": "reads QB; runs SQL",
+        "status": None, "status_note": None, "status_stale": False,
     }
 
 
@@ -314,3 +315,33 @@ def test_presence_rate_limited_429(client, make_code):
     assert last.status_code == 429
     assert last.headers.get("Retry-After")
     assert last.json()["detail"]["error"] == "rate_limited"
+
+
+def test_whoami_reflects_own_status(client, make_code):
+    code, auth = make_code("selfcheck")
+    client.post("/presence", headers=auth, json={"state": "thinking", "note": "reading the brief"})
+    me = client.get("/whoami", headers=auth).json()
+    assert me["status"] == "thinking" and me["status_note"] == "reading the brief"
+    assert me["status_stale"] is False
+
+
+def test_peers_status_alongside_capabilities(client, make_code):
+    code, auth = make_code("capstatus", capabilities="reads QB; runs SQL")
+    client.post("/presence", headers=auth, json={"state": "working", "note": "querying QB"})
+    peers = client.get("/peers", headers=auth).json()["peers"]
+    me = next(p for p in peers if p["name"] == "capstatus")
+    assert "reads QB" in me["capabilities"]
+    assert me["status"] == "working" and me["status_note"] == "querying QB"
+
+
+def test_status_scoped_per_room(client, make_code):
+    code_r1, auth_r1 = make_code("dualroom", room="r1")
+    code_r2, auth_r2 = make_code("dualroom", room="r2")
+    client.post("/presence", headers=auth_r1, json={"state": "working", "note": "in r1"})
+    client.post("/presence", headers=auth_r2, json={"state": "blocked", "note": "in r2"})
+    peers_r1 = client.get("/peers", headers=auth_r1).json()["peers"]
+    peers_r2 = client.get("/peers", headers=auth_r2).json()["peers"]
+    me_r1 = next(p for p in peers_r1 if p["name"] == "dualroom")
+    me_r2 = next(p for p in peers_r2 if p["name"] == "dualroom")
+    assert me_r1["status"] == "working" and me_r1["status_note"] == "in r1"
+    assert me_r2["status"] == "blocked" and me_r2["status_note"] == "in r2"
