@@ -52,6 +52,11 @@ class Settings:
     rate_max: int = _int("ARGYBARGY_RATE_MAX", 10)
     rate_window: float = _float("ARGYBARGY_RATE_WINDOW", 10.0)
 
+    # status/presence (POST /presence)
+    status_note_max: int = _int("ARGYBARGY_STATUS_NOTE_MAX", 120)
+    status_rate_max: int = _int("ARGYBARGY_STATUS_RATE_MAX", 6)
+    status_rate_window: float = _float("ARGYBARGY_STATUS_RATE_WINDOW", 20.0)
+
     # quotas (0 = unlimited)
     max_rooms: int = _int("ARGYBARGY_MAX_ROOMS", 0)
     max_codes: int = _int("ARGYBARGY_MAX_CODES", 0)

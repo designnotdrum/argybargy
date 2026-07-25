@@ -82,6 +82,13 @@ def test_settings_defaults_are_sane():
     assert isinstance(s.cors_origins, (list, tuple))
 
 
+def test_status_settings_defaults():
+    s = Settings()
+    assert s.status_note_max == 120
+    assert s.status_rate_max == 6
+    assert s.status_rate_window == 20.0
+
+
 # ----------------------------------------------------------------------- db
 def test_connect_enables_wal_and_row_factory(tmp_path):
     db = connect(tmp_path / "x.db")

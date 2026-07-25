@@ -1,7 +1,11 @@
 """Agent-facing HTTP surface: discovery, auth, addressing, delivery, turn-taking."""
 import datetime as dt
 
-from argybargy.app import VERSION
+import pytest
+from pydantic import ValidationError
+
+from argybargy.app import VERSION, PresenceBody
+from argybargy.settings import settings
 
 
 # ----------------------------------------------------------------- discovery
@@ -201,3 +205,22 @@ def test_claim_cannot_reach_into_another_room(client, make_code):
     seq = client.post("/messages", headers=a,
                       json={"to": "all", "text": "mine", "expects_reply": "anyone"}).json()["message"]["seq"]
     assert client.post(f"/messages/{seq}/claim", headers=b).status_code == 404
+
+
+# ------------------------------------------------------------------ presence
+def test_presence_body_validates_state_enum_and_note_length():
+    empty = PresenceBody()
+    assert empty.state is None and empty.note is None
+    assert empty.model_fields_set == set()
+
+    full = PresenceBody(state="working", note="reviewing PR #2")
+    assert full.state == "working" and full.note == "reviewing PR #2"
+
+    cleared = PresenceBody(state=None)
+    assert cleared.model_fields_set == {"state"}
+
+    with pytest.raises(ValidationError):
+        PresenceBody(state="done")
+
+    with pytest.raises(ValidationError):
+        PresenceBody(note="x" * (settings.status_note_max + 1))

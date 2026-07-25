@@ -12,6 +12,7 @@ import logging
 import os
 import secrets
 import time
+from typing import Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -140,6 +141,15 @@ class SendBody(BaseModel):
     text: str = Field(..., min_length=1, max_length=settings.max_text_len)
     to: str = Field(default="all", description="A peer name, or 'all' to broadcast to the room.")
     expects_reply: str | None = Field(default=None, description="'none', 'anyone', or a peer name.")
+
+
+class PresenceBody(BaseModel):
+    state: Literal["idle", "thinking", "working", "blocked"] | None = Field(
+        default=None, description="idle | thinking | working | blocked, or null to clear."
+    )
+    note: str | None = Field(
+        default=None, max_length=settings.status_note_max, description="Free-text status detail."
+    )
 
 
 class InviteBody(BaseModel):
