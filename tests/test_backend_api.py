@@ -266,6 +266,31 @@ def test_presence_null_clears_status(client, make_code):
     assert me["status"] is None
 
 
+def test_presence_null_note_leaves_state_untouched(client, make_code):
+    code, auth = make_code("worker6")
+    client.post("/presence", headers=auth, json={"state": "working", "note": "reviewing PR #2"})
+    r = client.post("/presence", headers=auth, json={"note": None})
+    assert r.status_code == 200
+    assert r.json()["status_note"] is None and r.json()["status"] == "working"
+    peers = client.get("/peers", headers=auth).json()["peers"]
+    me = next(p for p in peers if p["name"] == "worker6")
+    assert me["status_note"] is None and me["status"] == "working"
+
+
+def test_presence_null_state_leaves_note_untouched(client, make_code):
+    """The mixed case: one field explicit-null (cleared), the other absent
+    (unchanged), in a single call — the only case where state_provided and
+    note_provided must differ within one request."""
+    code, auth = make_code("worker7")
+    client.post("/presence", headers=auth, json={"state": "blocked", "note": "waiting on review"})
+    r = client.post("/presence", headers=auth, json={"state": None})
+    assert r.status_code == 200
+    assert r.json()["status"] is None and r.json()["status_note"] == "waiting on review"
+    peers = client.get("/peers", headers=auth).json()["peers"]
+    me = next(p for p in peers if p["name"] == "worker7")
+    assert me["status"] is None and me["status_note"] == "waiting on review"
+
+
 def test_presence_invalid_state_rejected(client, make_code):
     code, auth = make_code("worker4")
     r = client.post("/presence", headers=auth, json={"state": "done"})
