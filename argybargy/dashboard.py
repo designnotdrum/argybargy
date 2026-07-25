@@ -196,7 +196,9 @@ DASHBOARD_HTML = r"""<!doctype html>
         out.push({
           name: p.name, room: room, online: p.online, life: life,
           secondsSinceSeen: p.seconds_since_seen, hue: hueFor(p.name),
-          justJoined: p.online && !(was && was.online)
+          justJoined: p.online && !(was && was.online),
+          status: p.status || null, statusNote: p.status_note || null,
+          statusStale: !!p.status_stale
         });
       });
     });
@@ -216,7 +218,10 @@ DASHBOARD_HTML = r"""<!doctype html>
         online: ex.online || v.online,
         justJoined: ex.justJoined || v.justJoined,
         life: better ? v.life : ex.life,
-        secondsSinceSeen: better ? v.secondsSinceSeen : ex.secondsSinceSeen
+        secondsSinceSeen: better ? v.secondsSinceSeen : ex.secondsSinceSeen,
+        status: better ? v.status : ex.status,
+        statusNote: better ? v.statusNote : ex.statusNote,
+        statusStale: better ? v.statusStale : ex.statusStale
       };
     });
     return Object.keys(by).map(function (k) { return by[k]; });

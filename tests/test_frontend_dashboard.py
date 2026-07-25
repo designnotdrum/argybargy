@@ -142,6 +142,16 @@ def test_dedupe_keeps_the_liveliest_sighting(dash):
     assert sorted(result) == ["a:online", "b:fading"]
 
 
+def test_dedupe_donates_status_from_the_freshest_sighting(dash):
+    result = dash.evaluate("""window.__argy.dedupe([
+      {name:'a',room:'r1',life:'offline',online:false,secondsSinceSeen:300,hue:1,justJoined:false,
+       status:'blocked',statusNote:'waiting on auth',statusStale:true},
+      {name:'a',room:'r2',life:'online', online:true, secondsSinceSeen:2, hue:1,justJoined:true,
+       status:'working',statusNote:'reviewing PR #2',statusStale:false}
+    ]).map(function(x){return [x.status,x.statusNote,x.statusStale]})[0]""")
+    assert result == ["working", "reviewing PR #2", False]
+
+
 # ============================================================ rendering
 def test_sidebar_lists_rooms_and_agents(dash, seeded):
     assert dash.locator(f'[data-room="{seeded["room"]}"]').count() == 1
