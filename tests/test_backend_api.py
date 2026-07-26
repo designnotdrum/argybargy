@@ -31,12 +31,12 @@ def test_openapi_and_docs_served_by_default(client):
 
 
 def test_openapi_presence_requestbody_describes_presence_body(client):
-    """POST /presence takes an `Any`-typed body (validated by hand, after `_touch()`) so
-    a badly-shaped payload can't eat a peer's heartbeat — see the comment on `presence()`
-    for the one exception (JSON that fails to parse at all). That untyping means FastAPI
-    can't derive the schema on its own; `app.py` patches the generated document to restore
-    it. Guard the patch: without it, this schema silently reverts to a bare object and
-    /docs stops describing the real shape."""
+    """POST /presence takes Starlette's raw `Request` and parses the body by hand, after
+    `_touch()`, so no payload shape — badly-shaped object, non-object JSON, or invalid
+    JSON syntax — can eat a peer's heartbeat; see the comment on `presence()`. Taking a
+    raw `Request` means FastAPI can't derive a schema for the route on its own; `app.py`
+    patches the generated document to restore it. Guard the patch: without it, this
+    schema silently disappears and /docs stops describing the real shape."""
     schema = client.get("/openapi.json").json()["paths"]["/presence"]["post"]["requestBody"]
     schema = schema["content"]["application/json"]["schema"]
 
@@ -375,20 +375,45 @@ def test_presence_bare_json_string_body_now_counts_as_a_heartbeat(client, make_c
     assert me["online"] is True
 
 
-def test_presence_syntactically_invalid_json_does_not_touch_known_gap(client, make_code, admin_headers):
-    """The one gap the fix above does NOT close, on purpose: a body that isn't valid JSON
-    at all. FastAPI decodes the request body before resolving `Depends(require_peer)` or
-    entering the handler, no matter what `body` is typed as — so a syntax error still 422s
-    without a touch. Closing it would mean parsing the raw `Request` by hand instead of
-    letting FastAPI do it, which isn't worth it for a body no real JSON serializer emits.
-    This test pins the gap down so nobody 'fixes' it by accident and finds out the hard
-    way that it changes the 422 contract."""
+def test_presence_syntactically_invalid_json_still_counts_as_a_heartbeat(client, make_code, admin_headers):
+    """The last gap: a body that isn't valid JSON at all. `presence()` takes a raw `Request`
+    and parses the body by hand *after* `_touch()`, so a syntax error still 422s but no
+    longer costs the peer its liveness — same as the other bad-shape cases above. The 422
+    error itself must stay indistinguishable from one FastAPI raises on its own for the
+    same failure (compare `test_malformed_json_matches_fastapis_own_422_shape` below)."""
     code, auth = make_code("worker10b")
     r = client.post("/presence", headers={**auth, "Content-Type": "application/json"}, content=b"{not json")
     assert r.status_code == 422
     assert r.json()["detail"][0]["type"] == "json_invalid"
-    room = client.get("/admin/state", headers=admin_headers).json()["peers"].get("default", [])
-    assert not any(p["name"] == "worker10b" for p in room)
+    room = client.get("/admin/state", headers=admin_headers).json()["peers"]["default"]
+    me = next(p for p in room if p["name"] == "worker10b")
+    assert me["online"] is True
+    assert me["seconds_since_seen"] < 1.0
+
+
+def test_malformed_json_matches_fastapis_own_422_shape(client, make_code):
+    """`/presence` parses its body by hand instead of letting FastAPI do it (see the comment
+    on `presence()`), specifically so it can touch presence before a JSON syntax error is
+    even discovered. That hand-rolled parsing must still fail exactly the way FastAPI's own
+    body parsing would: same status, same `detail` structure, same error `type`/`loc`
+    rooting/`msg`/`ctx` keys — a client can't tell the difference. `/messages` takes a real
+    Pydantic body (`SendBody`), so FastAPI parses it, giving us a reference 422 for the
+    identical malformed-JSON input to diff against."""
+    code, auth = make_code("worker11b")
+    malformed = b"{not json"
+    headers = {**auth, "Content-Type": "application/json"}
+
+    reference = client.post("/messages", headers=headers, content=malformed)
+    ours = client.post("/presence", headers=headers, content=malformed)
+
+    assert reference.status_code == ours.status_code == 422
+    ref_body, our_body = reference.json(), ours.json()
+    assert set(our_body.keys()) == set(ref_body.keys()) == {"detail"}
+    assert len(our_body["detail"]) == len(ref_body["detail"]) == 1
+    ref_err, our_err = ref_body["detail"][0], our_body["detail"][0]
+    assert set(our_err.keys()) == set(ref_err.keys())
+    for key in ("type", "loc", "msg", "input", "ctx"):
+        assert our_err[key] == ref_err[key], key
 
 
 def test_presence_rate_limited_429(client, make_code):

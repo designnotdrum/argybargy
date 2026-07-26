@@ -8,13 +8,14 @@
 from __future__ import annotations
 
 import hmac
+import json
 import logging
 import os
 import secrets
 import time
 from typing import Any, Literal
 
-from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field, ValidationError
@@ -304,17 +305,15 @@ async def history(peer: Peer = Depends(require_peer), limit: int = Query(default
 
 
 @app.post("/presence")
-async def presence(body: Any = Body(default=None), peer: Peer = Depends(require_peer)) -> dict:
-    # `body` is typed `Any`, not `PresenceBody`, so FastAPI accepts whatever JSON value
-    # shows up — object, list, string, whatever — without checking its shape, and `_touch()`
-    # below runs before that shape is ever inspected. That covers the case this endpoint
-    # exists for: an agent sending a badly-shaped status payload still gets its heartbeat
-    # recorded, instead of 422ing every call and quietly falling offline. What it does NOT
-    # cover: a body that isn't valid JSON at all. FastAPI decodes the request body before
-    # this function is entered no matter what `body` is typed as, so `{not json` still 422s
-    # without a touch — that's FastAPI parsing, not us, and taking the raw `Request` apart by
-    # hand just to touch presence ahead of a JSON syntax error isn't worth it. Known gap, not
-    # a bug — see test_presence_syntactically_invalid_json_does_not_touch_known_gap.
+async def presence(request: Request, peer: Peer = Depends(require_peer)) -> dict:
+    # The heartbeat is recorded before the payload is inspected at all.
+    #
+    # `request` is Starlette's raw `Request`, not a `PresenceBody` (or even an `Any`-typed
+    # `Body(...)`) parameter, so FastAPI does no body parsing of its own before this function
+    # is entered — that's what let a syntax error in the JSON 422 before `_touch()` ever ran.
+    # We read the bytes and decode them ourselves, after touching presence, so every possible
+    # request body — a well-formed object, the wrong shape, a non-object JSON value, or bytes
+    # that aren't valid JSON at all — reaches this point with the peer already marked online.
     _touch(peer)
     if not hub.allow(f"status:{peer.code}", settings.status_rate_max, settings.status_rate_window):
         raise HTTPException(
@@ -324,6 +323,26 @@ async def presence(body: Any = Body(default=None), peer: Peer = Depends(require_
                     "retry_after": int(settings.status_rate_window)},
             headers={"Retry-After": str(int(settings.status_rate_window))},
         )
+    body: Any = None
+    body_bytes = await request.body()
+    if body_bytes:
+        try:
+            body = json.loads(body_bytes)
+        except json.JSONDecodeError as e:
+            # Match the error FastAPI's own body parsing raises for the same failure
+            # (fastapi.routing, the `body_field` branch) field-for-field, so a client
+            # can't tell this route parses its body by hand instead of letting FastAPI
+            # do it — same type/loc/msg/input/ctx shape, same 422 envelope.
+            raise RequestValidationError(
+                [{
+                    "type": "json_invalid",
+                    "loc": ("body", e.pos),
+                    "msg": "JSON decode error",
+                    "input": {},
+                    "ctx": {"error": e.msg},
+                }],
+                body=e.doc,
+            ) from e
     try:
         parsed = PresenceBody.model_validate(body or {})
     except ValidationError as e:
@@ -344,14 +363,13 @@ async def presence(body: Any = Body(default=None), peer: Peer = Depends(require_
             "status": current["status"], "status_note": current["status_note"]}
 
 
-# `presence()`'s untyped body (see the comment above) means FastAPI can't derive a
-# request-body schema for the route on its own, so /docs and /openapi.json show a bare
-# object instead of PresenceBody's shape. `openapi_extra` on the route decorator can't
-# repair this cleanly: FastAPI already builds a generic `anyOf`-wrapped schema for the
-# untyped param, and merges any `openapi_extra` fragment into it key-by-key
-# (`fastapi.utils.deep_dict_update`) rather than replacing it — the leftover `anyOf`
-# stays behind next to the real schema. Patching the generated document directly, the
-# customization FastAPI's own `openapi()` docstring points to, replaces it outright —
+# `presence()` takes Starlette's raw `Request` (see the comment above) and parses the body
+# by hand, so FastAPI has no body param to derive a schema from at all — /docs and
+# /openapi.json would show no request body for the route whatsoever unless we supply one.
+# `openapi_extra` on the route decorator can't fill that gap cleanly either: with a real body
+# param it only merges into FastAPI's generated schema key-by-key (`fastapi.utils.deep_dict_
+# update`), and with none it has nothing to merge into. Patching the generated document
+# directly, the customization FastAPI's own `openapi()` docstring points to, sets it outright —
 # derived from the model so the two can't drift apart.
 _default_openapi = app.openapi
 
