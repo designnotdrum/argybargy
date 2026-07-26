@@ -686,6 +686,15 @@ def test_everyone_mention_reply_marker_cycles(dash):
     assert strip.inner_text().endswith("reply expected: none")
 
 
+def test_mention_text_in_sent_messages_is_highlighted(dash, client, seeded):
+    auth = {"Authorization": f"Bearer {seeded['codes']['claude-ui']}"}
+    client.post("/messages", headers=auth,
+                json={"to": "all", "text": "hey @codex-ui can you check this"})
+    dash.wait_for_timeout(3500)
+    highlighted = dash.locator(".conv-mention-text", has_text="@codex-ui")
+    assert highlighted.count() >= 1
+
+
 # ============================================================ rendering
 def test_sidebar_lists_rooms_and_agents(dash, seeded):
     assert dash.locator(f'[data-room="{seeded["room"]}"]').count() == 1

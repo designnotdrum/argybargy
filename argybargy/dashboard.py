@@ -50,6 +50,7 @@ DASHBOARD_HTML = r"""<!doctype html>
 .conv-preview-strip{display:block;width:100%;text-align:left;font-family:var(--mono);color:var(--faint);background:none;border:0;padding:6px 12px 0;font-size:11px;cursor:default}
 .conv-preview-strip--tappable{cursor:pointer}
 .conv-preview-strip--tappable:hover{color:var(--muted)}
+.conv-mention-text{color:var(--agent);font-weight:600}
 </style>
 </head>
 <body>
@@ -659,6 +660,43 @@ DASHBOARD_HTML = r"""<!doctype html>
   }
 
   /* -------------------------------------------------------------- timeline */
+  /* Lookup of every agent name S has ever seen, for cosmetic @name
+     highlighting in already-sent message text below. Purely decorative —
+     this never decides what gets SENT (that is Task 1's commit-only
+     mapping layer's job alone); it only re-styles already-delivered text. */
+  function knownAgentNames() {
+    var set = {};
+    S.agents.forEach(function (a) { set[a.name] = true; });
+    return set;
+  }
+  /* Appends text to row as a mix of plain text nodes and highlighted
+     @name spans, via createTextNode/E()'s textContent path — never parses
+     text as markup, matching this file's DOM-only text-insertion posture
+     (verified: zero unsafe-markup-write sites anywhere). A @token
+     only gets highlighted if it matches a currently-known agent name;
+     everything else (including a stray "@" or an unknown "@word") renders
+     as plain text exactly as it does today. */
+  function appendMessageText(row, text) {
+    var known = knownAgentNames();
+    var re = /@([A-Za-z0-9_-]+)/g;
+    var lastIndex = 0;
+    var m;
+    while ((m = re.exec(text)) !== null) {
+      if (m.index > lastIndex) {
+        row.appendChild(document.createTextNode(text.slice(lastIndex, m.index)));
+      }
+      var name = m[1];
+      if (known[name]) {
+        row.appendChild(E("span", "conv-mention-text hue-" + (hueFor(name) % 5), { text: "@" + name }));
+      } else {
+        row.appendChild(document.createTextNode(m[0]));
+      }
+      lastIndex = re.lastIndex;
+    }
+    if (lastIndex < text.length) {
+      row.appendChild(document.createTextNode(text.slice(lastIndex)));
+    }
+  }
   function renderTimeline() {
     var tl = document.getElementById("timeline");
     if (!tl) { return; }
@@ -701,7 +739,7 @@ DASHBOARD_HTML = r"""<!doctype html>
         if (m.to && m.to !== "all" && m.to !== hide) {
           row.appendChild(E("span", "conv-dir hue-" + (hueFor(m.to) % 5), { text: "→ " + m.to }));
         }
-        row.appendChild(document.createTextNode(m.text));
+        appendMessageText(row, m.text);
         if (m.claimed_by) { row.appendChild(claimedBadge(m.claimed_by)); }
         else if (m.expects_reply && m.expects_reply !== "none") { row.appendChild(expectsBadge(m)); }
         body.appendChild(row);
