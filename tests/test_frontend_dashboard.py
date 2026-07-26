@@ -142,6 +142,15 @@ def test_dedupe_keeps_the_liveliest_sighting(dash):
     assert sorted(result) == ["a:online", "b:fading"]
 
 
+@pytest.mark.parametrize("name,expected", [
+    ("build", True), ("room-42_v2", True), ("  build  ", True),
+    ("", False), ("   ", False), ("Build", False),
+    ("room name", False), ("a" * 64, True), ("a" * 65, False),
+])
+def test_room_name_validation(dash, name, expected):
+    assert dash.evaluate(f"window.__argy.isValidRoomName({name!r})") is expected
+
+
 # ============================================================ rendering
 def test_sidebar_lists_rooms_and_agents(dash, seeded):
     assert dash.locator(f'[data-room="{seeded["room"]}"]').count() == 1
@@ -272,6 +281,34 @@ def test_drawer_shows_public_url_and_key_count(dash, client, admin_headers):
     assert dash.locator("#adUrl").inner_text().startswith("http")
     expected = len(client.get("/admin/state", headers=admin_headers).json()["codes"])
     assert dash.locator("#adKeyCount").inner_text().strip() == f"· {expected}"
+
+
+def test_sidebar_plus_creates_a_room_and_shows_the_mint_result(dash, client, admin_headers):
+    dash.click("#openCreateRoom")
+    dash.wait_for_selector("#crRoot")
+    submit = dash.locator("#crSubmit")
+    assert submit.is_disabled()
+
+    dash.fill("#crRoom", "launchpad")
+    assert submit.is_disabled(), "still needs an agent name"
+    dash.fill("#crName", "scout")
+    assert submit.is_enabled()
+
+    submit.click()
+    dash.wait_for_selector("#crOut .ad-resultbox", timeout=10000)
+
+    codes = client.get("/admin/state", headers=admin_headers).json()["codes"]
+    minted = [c for c in codes if c["name"] == "scout" and c["room"] == "launchpad"]
+    assert minted, "mint should have created launchpad"
+
+
+def test_create_room_warns_but_does_not_block_on_a_duplicate_name(dash, seeded):
+    dash.click("#openCreateRoom")
+    dash.wait_for_selector("#crRoot")
+    dash.fill("#crRoom", seeded["room"])
+    assert "already exists" in dash.locator("#crHint").inner_text()
+    dash.fill("#crName", "another-agent")
+    assert dash.locator("#crSubmit").is_enabled(), "duplicate name warns, does not block"
 
 
 def test_bad_token_surfaces_an_error_state(page, live_server):
