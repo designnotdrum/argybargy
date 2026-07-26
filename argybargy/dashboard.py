@@ -200,8 +200,7 @@ DASHBOARD_HTML = r"""<!doctype html>
           name: p.name, room: room, online: p.online, life: life,
           secondsSinceSeen: p.seconds_since_seen, hue: hueFor(p.name),
           justJoined: p.online && !(was && was.online),
-          status: p.status || null, statusNote: p.status_note || null,
-          statusStale: !!p.status_stale
+          status: p.status || null, statusNote: p.status_note || null
         });
       });
     });
@@ -223,8 +222,7 @@ DASHBOARD_HTML = r"""<!doctype html>
         life: better ? v.life : ex.life,
         secondsSinceSeen: better ? v.secondsSinceSeen : ex.secondsSinceSeen,
         status: better ? v.status : ex.status,
-        statusNote: better ? v.statusNote : ex.statusNote,
-        statusStale: better ? v.statusStale : ex.statusStale
+        statusNote: better ? v.statusNote : ex.statusNote
       };
     });
     return Object.keys(by).map(function (k) { return by[k]; });
@@ -380,16 +378,17 @@ DASHBOARD_HTML = r"""<!doctype html>
     if (!recent && a.life === "fading") { cls.push("fading"); }
     if (!recent && a.justJoined) { cls.push("join-pulse"); }
     if (S.view.kind === "dm" && S.view.agent === a.name) { cls.push("active"); }
+    var status = statusLine(a);
+    var presence = a.life === "online" ? "online" : lastSeen(seconds) + " ago";
     var b = E("button", cls.join(" "), {
       type: "button", "data-agent": a.name,
-      "aria-label": a.name + " — " + (a.life === "online" ? "online" : lastSeen(seconds) + " ago") + ", open direct view"
+      "aria-label": a.name + " — " + presence + (status ? ", " + status : "") + ", open direct view"
     });
     b.style.setProperty("--hue", a.hue);
     b.appendChild(avatar(a.name, "row", a.life === "online" ? "on" : "off"));
     var brand = brandAccent(a.name);
     var nm = E("span", brand ? "sb-aname is-brand sb-aname--brand" : "sb-aname", { text: a.name });
     if (brand) { nm.style.setProperty("--agent", brand); }
-    var status = statusLine(a);
     b.appendChild(E("span", "sb-atext", null, nm,
       status ? E("span", "sb-astatus", { title: status, text: status }) : null));
     b.appendChild(E("span", "sb-alast mono",

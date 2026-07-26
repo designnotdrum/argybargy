@@ -148,11 +148,11 @@ def test_dedupe_keeps_the_liveliest_sighting(dash):
 def test_dedupe_donates_status_from_the_freshest_sighting(dash):
     result = dash.evaluate("""window.__argy.dedupe([
       {name:'a',room:'r1',life:'offline',online:false,secondsSinceSeen:300,hue:1,justJoined:false,
-       status:'blocked',statusNote:'waiting on auth',statusStale:true},
+       status:'blocked',statusNote:'waiting on auth'},
       {name:'a',room:'r2',life:'online', online:true, secondsSinceSeen:2, hue:1,justJoined:true,
-       status:'working',statusNote:'reviewing PR #2',statusStale:false}
-    ]).map(function(x){return [x.status,x.statusNote,x.statusStale]})[0]""")
-    assert result == ["working", "reviewing PR #2", False]
+       status:'working',statusNote:'reviewing PR #2'}
+    ]).map(function(x){return [x.status,x.statusNote]})[0]""")
+    assert result == ["working", "reviewing PR #2"]
 
 
 # ============================================================ rendering
@@ -354,6 +354,17 @@ def test_capabilities_are_never_interpreted_as_html(dash, client, admin_headers)
     assert dash.evaluate("window.__xss3") is None
     assert dash.locator(".ad-kcap img").count() == 0
     client.post("/admin/revoke", headers=admin_headers, json={"target": "capsy-xss"})
+
+
+def test_status_note_is_never_interpreted_as_html(dash, client, admin_headers, seeded):
+    code = client.post("/admin/invite", headers=admin_headers,
+                       json={"name": "status-note-xss", "room": seeded["room"]}).json()["code"]
+    client.post("/presence", headers={"Authorization": f"Bearer {code}"},
+                json={"state": "working", "note": '<img src=x onerror="window.__xss4=1">'})
+    dash.wait_for_timeout(3500)
+    assert dash.evaluate("window.__xss4") is None
+    assert dash.locator(".sb-astatus img").count() == 0
+    client.post("/admin/revoke", headers=admin_headers, json={"target": "status-note-xss"})
 
 
 def test_dashboard_makes_no_third_party_requests(page, live_server, admin_headers):
