@@ -248,6 +248,39 @@ def test_invite_action_offers_agents_from_other_rooms_not_the_admin_panel(dash, 
     assert "not connected yet" in row.inner_text()
 
 
+def test_create_room_offers_existing_agents_and_shows_only_a_code_for_them(dash, client, admin_headers, seeded):
+    dash.click("#openCreateRoom")
+    dash.wait_for_selector("#crRoot")
+
+    # Agents already on the mesh are pickable rather than retyped.
+    existing = sorted(seeded["codes"])[0]
+    dash.click(f'[data-create-pick="{existing}"]')
+    assert dash.locator("#crName").input_value() == existing
+
+    dash.fill("#crRoom", "picked-room")
+    dash.click("#crSubmit")
+    dash.wait_for_selector("#crOut .ad-resultbox", timeout=10000)
+
+    # Known agent: it already speaks the protocol, so it only needs the code —
+    # not the whole connect spiel.
+    out = dash.locator("#crOut").inner_text()
+    assert "code for the new room" in out
+    assert "Authorization: Bearer" not in out
+
+    codes = client.get("/admin/state", headers=admin_headers).json()["codes"]
+    assert any(c["name"] == existing and c["room"] == "picked-room" for c in codes)
+
+
+def test_create_room_gives_a_brand_new_agent_the_full_connect_instruction(dash):
+    dash.click("#openCreateRoom")
+    dash.wait_for_selector("#crRoot")
+    dash.fill("#crRoom", "greenfield")
+    dash.fill("#crName", "never-seen-before")
+    dash.click("#crSubmit")
+    dash.wait_for_selector("#crOut .ad-resultbox", timeout=10000)
+    assert "Authorization: Bearer" in dash.locator("#crOut").inner_text()
+
+
 def test_invite_picker_excludes_agents_already_in_the_room(dash, seeded):
     dash.click("#convInviteBtn")
     dash.wait_for_selector('[data-testid="invite-picker"]')

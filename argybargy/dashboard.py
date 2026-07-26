@@ -868,8 +868,20 @@ DASHBOARD_HTML = r"""<!doctype html>
     root.appendChild(E("div", "crp-frow", null,
       E("input", "crp-field", { id: "crRoom", autocomplete: "off", placeholder: "room name", "aria-label": "Room name" })));
     root.appendChild(E("p", "crp-hint", { id: "crHint" }));
+    /* A room can't exist without at least one agent, so the first one is picked
+       here. Same shape as the invite picker: choose someone already on the mesh,
+       or type a name for an agent that doesn't exist yet. */
+    var known = knownAgentNames();
+    if (known.length) {
+      var picks = E("div", "ip-list", { "data-testid": "create-room-candidates" });
+      known.forEach(function (n) {
+        picks.appendChild(E("button", "ip-item", { type: "button", "data-create-pick": n },
+          avatar(n, "sm"), E("span", "ip-item__name", { text: n })));
+      });
+      root.appendChild(picks);
+    }
     root.appendChild(E("div", "crp-frow", null,
-      E("input", "crp-field", { id: "crName", autocomplete: "off", placeholder: "first agent name", "aria-label": "First agent name" })));
+      E("input", "crp-field", { id: "crName", autocomplete: "off", placeholder: known.length ? "or a new agent name" : "first agent name", "aria-label": "First agent name" })));
     var expSel = E("select", "crp-field", { id: "crExpiry", "aria-label": "Expiry" });
     EXPIRY_OPTIONS.forEach(function (o) { expSel.appendChild(E("option", null, { value: o[0], text: o[1] })); });
     root.appendChild(E("div", "crp-frow", null, expSel,
@@ -896,13 +908,19 @@ DASHBOARD_HTML = r"""<!doctype html>
     }).then(function (r) {
       S.createRoom.pending = false;
       out.textContent = "";
+      /* An agent already on the mesh knows the relay and the protocol — it just
+         needs the code for this new room. One that doesn't exist yet needs the
+         whole connect instruction. Show each only what it's missing. */
+      var wasKnown = S.createRoom.knownAtOpen.indexOf(r.name || name) >= 0;
+      var payload = wasKnown ? r.code : (r.instruction || r.code);
       out.appendChild(E("div", "ad-resultbox", null,
-        "Key for ", E("b", null, { text: r.name || name }), " in ",
-        E("b", null, { text: "#" + (r.room || room) }),
-        E("div", "ad-code", { text: r.code }),
+        E("b", null, { text: r.name || name }), " is in ",
+        E("b", null, { text: "#" + (r.room || room) }), ". ",
+        wasKnown ? "Give it this code for the new room:" : "Paste this to it to connect:",
+        E("div", "ad-code", { text: payload }),
         E("div", null, { style: "margin-top:7px" },
-          E("button", "ad-btn", { type: "button", "data-copykey": r.code, "aria-label": "created" },
-            icon("copy", 12), " Copy code")),
+          E("button", "ad-btn", { type: "button", "data-copykey": payload, "aria-label": "created" },
+            icon("copy", 12), " Copy")),
         E("p", "ad-hint", null, "Copy it now — with hashing on it will not be shown again.")));
       return poll();
     }).catch(function () {
@@ -1298,6 +1316,12 @@ DASHBOARD_HTML = r"""<!doctype html>
         doInviteExisting(t.getAttribute("data-invite-name"));
         return;
       }
+      if (t.hasAttribute("data-create-pick")) {
+        var pickName = document.getElementById("crName");
+        if (pickName) { pickName.value = t.getAttribute("data-create-pick"); }
+        refreshCreateRoomHint();
+        return;
+      }
       if (t.hasAttribute("data-delete-room")) {
         var deleteTarget = t.getAttribute("data-delete-room");
         S.roomMenuOpen = null;
@@ -1329,7 +1353,10 @@ DASHBOARD_HTML = r"""<!doctype html>
       switch (id) {
         case "navOpen": S.navOpen = true; renderAll(); break;
         case "openCreateRoom": case "convNoRoomCreate":
-          S.createRoom = { open: true, pending: false };
+          /* Snapshot who's already on the mesh at open time — after the mint
+             the new name is in codes too, so asking "was this a new agent?"
+             afterwards would always answer no. */
+          S.createRoom = { open: true, pending: false, knownAtOpen: knownAgentNames() };
           renderCreateRoom();
           break;
         case "crClose": case "crScrim": {
