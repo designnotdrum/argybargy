@@ -108,7 +108,8 @@ DASHBOARD_HTML = r"""<!doctype html>
 .conv-chip{display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 8px 0 4px;font-size:12px;font-weight:500;color:var(--agent, var(--muted));background:color-mix(in srgb, var(--agent, var(--border)) 12%, transparent);border:1px solid color-mix(in srgb, var(--agent, var(--border)) 38%, transparent);border-radius:999px}
 .conv-chip--armed{color:var(--amber);background:var(--amber-dim);border-color:color-mix(in srgb, var(--amber) 42%, transparent)}
 .conv-chip__marker{font-size:9px;text-transform:uppercase;letter-spacing:.06em;opacity:.85}
-.conv-mention-popup{position:absolute;bottom:auto;top:calc(100% + 4px);left:12px;max-height:220px;overflow-y:auto;z-index:20}
+.conv-mention-popup{left:12px;max-height:220px;overflow-y:auto}
+.conv-mention-popup--below{bottom:auto;top:calc(100% + 4px)}
 .conv-menu__item--active{background:color-mix(in srgb, var(--text) 8%, transparent)}
 /* avatar() draws a lettered monogram (a bare text node, no <svg>) for any
    agent with no recognized vendor glyph — see glyphFor()/avatar() and
@@ -969,6 +970,34 @@ DASHBOARD_HTML = r"""<!doctype html>
   }
 
   /* -------------------------------------------------------------- composer */
+  /* The mention popup's default CSS (.conv-mention-popup, which layers on
+     top of the shared .conv-menu base) opens ABOVE its anchor — the right
+     default here, since the composer sits at the bottom of a full-height
+     layout and there is rarely room below it. Flip to opening below only
+     when there genuinely isn't room above. Measures live against the
+     viewport each call rather than caching, so it re-evaluates naturally
+     on every render — this file rebuilds the popup's contents wholesale
+     each time renderComposer() runs (see the rail/popup handling just
+     below), so there's no long-lived node to observe and no need for
+     IntersectionObserver. Also clamps max-height to whichever side it
+     lands on, so a genuinely short viewport (not room for the full 220px
+     either direction) still can't push the popup off-screen — satisfies
+     "must stay inside the viewport" even in that squeeze. */
+  function positionMentionPopup(popup, anchor) {
+    var EDGE = 8; /* small breathing room off the viewport edge */
+    popup.classList.remove("conv-mention-popup--below");
+    popup.style.maxHeight = "";
+    var anchorRect = anchor.getBoundingClientRect();
+    var neededHeight = popup.getBoundingClientRect().height;
+    var spaceAbove = anchorRect.top - EDGE;
+    var spaceBelow = window.innerHeight - anchorRect.bottom - EDGE;
+    if (spaceAbove < neededHeight && spaceBelow > spaceAbove) {
+      popup.classList.add("conv-mention-popup--below");
+      popup.style.maxHeight = Math.max(0, Math.min(220, spaceBelow)) + "px";
+    } else {
+      popup.style.maxHeight = Math.max(0, Math.min(220, spaceAbove)) + "px";
+    }
+  }
   function renderComposer() {
     var input = document.getElementById("composerInput");
     var dm = S.view.kind === "dm" ? S.view.agent : null;
@@ -1035,6 +1064,7 @@ DASHBOARD_HTML = r"""<!doctype html>
         candidates.forEach(function (c, i) {
           popup.appendChild(mentionCandidateButton(c, i === S.mentionHighlight));
         });
+        positionMentionPopup(popup, popup.parentElement);
       }
     }
     var strip = document.getElementById("previewStrip");
