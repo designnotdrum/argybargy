@@ -344,6 +344,114 @@ def test_next_chip_id_is_unique_per_call(dash):
     assert a != b
 
 
+# =================================================== mention composer UI
+
+def test_typing_at_opens_mention_popup_and_filters(dash):
+    dash.fill("#composerInput", "@")
+    dash.wait_for_selector('[data-testid="mention-popup"]')
+    assert dash.locator('[data-testid="mention-popup"]').is_visible()
+    names = dash.locator('[data-testid="mention-candidate"]').all_inner_texts()
+    assert names == ["everyone", "claude-ui", "codex-ui", "gemini-ui", "hermes-ui"]
+    dash.fill("#composerInput", "@cod")
+    candidates = dash.locator('[data-testid="mention-candidate"]')
+    assert candidates.count() == 1
+    assert "codex-ui" in candidates.first.inner_text()
+
+
+def test_mention_candidates_never_include_the_operator(dash):
+    dash.fill("#composerInput", "@")
+    names = dash.locator('[data-testid="mention-candidate"]').all_inner_texts()
+    assert "operator" not in names
+    # No offline-peer fixture exists in this suite (an invited-but-never-
+    # touched agent never appears as a peer at all — see hub.py, agents only
+    # show up once "seen"), so this test can only prove the filter matches
+    # the removed to-menu's exact online-peer set, not exercise a live
+    # offline-exclusion case. That's the same filter, reused verbatim
+    # (dashboard.py's onlinePeerNamesInRoom mirrors :509-511 exactly).
+    assert set(names) == {"everyone", "claude-ui", "codex-ui", "gemini-ui", "hermes-ui"}
+
+
+def test_clicking_a_candidate_commits_a_mention_chip(dash):
+    dash.fill("#composerInput", "@cod")
+    dash.click('[data-testid="mention-candidate"]')
+    assert dash.locator('[data-testid="mention-popup"]').is_hidden()
+    chip = dash.locator('[data-testid="mention-chip"]')
+    assert chip.count() == 1
+    assert "codex-ui" in chip.inner_text()
+    # Committing removes "@cod" from the plain-text input — the chip lives in
+    # the rail, not inline in the text (see the top-of-plan [design call]).
+    assert dash.locator("#composerInput").input_value() == ""
+
+
+def test_committing_a_chip_returns_focus_to_the_input_for_continued_typing(dash):
+    dash.fill("#composerInput", "@cod")
+    dash.click('[data-testid="mention-candidate"]')
+    assert dash.evaluate("document.activeElement.id") == "composerInput"
+    dash.keyboard.type(" ping")
+    assert dash.locator("#composerInput").input_value() == " ping"
+
+
+def test_committing_a_second_chip_stacks_in_commit_order(dash):
+    dash.fill("#composerInput", "@cod")
+    dash.click('[data-testid="mention-candidate"]')
+    dash.keyboard.type("@cla")
+    dash.click('[data-testid="mention-candidate"]')
+    chips = dash.locator('[data-testid="mention-chip"]').all_inner_texts()
+    assert len(chips) == 2
+    assert "codex-ui" in chips[0]
+    assert "claude-ui" in chips[1]
+
+
+def test_commit_only_plain_at_mentions_with_no_interaction_send_literally_to_all(
+    dash, client, admin_headers, seeded
+):
+    dash.fill("#composerInput", "@codex-ui is faster than @claude-ui")
+    assert dash.locator('[data-testid="mention-chip"]').count() == 0
+    dash.click("#sendBtn")
+    dash.wait_for_timeout(500)
+    assert dash.locator('[data-testid="mention-chip"]').count() == 0
+    msgs = client.get("/admin/state", headers=admin_headers).json()["messages"]
+    sent = [m for m in msgs if m["text"] == "@codex-ui is faster than @claude-ui"
+            and m["room"] == seeded["room"]]
+    assert sent, "literal text should have reached the relay unparsed"
+    assert sent[0]["to"] == "all"
+
+
+def test_switching_rooms_resets_uncommitted_and_committed_mention_state(dash, seeded):
+    dash.fill("#composerInput", "@cod")
+    dash.click('[data-testid="mention-candidate"]')
+    assert dash.locator('[data-testid="mention-chip"]').count() == 1
+    dash.click(f'[data-room="{seeded["room"]}"]')
+    assert dash.locator('[data-testid="mention-chip"]').count() == 0
+    assert dash.locator('[data-testid="mention-popup"]').is_hidden()
+
+
+def test_mention_rail_appears_only_while_chips_are_committed(dash, seeded):
+    """Nick's call: the rail is absent (not just visually empty) at rest,
+    appears the instant a chip commits, and disappears again once the last
+    chip is gone — minimum chrome while typing an ordinary message. This
+    task's own commit mechanism (click a candidate) and its own reset
+    mechanism (switching rooms clears S.chips — the test right above this
+    one) are enough to exercise all three states without reaching for Task
+    3's decompose/backspace removal, which doesn't exist yet at this point
+    in the branch. Task 3's own backspace test adds one more assertion of
+    the same fact via genuine single-chip removal, once that exists."""
+    rail = dash.locator('[data-testid="mention-rail"]')
+    assert rail.is_hidden()
+    dash.fill("#composerInput", "@cod")
+    dash.click('[data-testid="mention-candidate"]')
+    assert rail.is_visible()
+    assert dash.locator('[data-testid="mention-chip"]').count() == 1
+    dash.click(f'[data-room="{seeded["room"]}"]')
+    assert rail.is_hidden()
+
+
+def test_dm_view_does_not_open_the_mention_popup(dash):
+    dash.click('[data-agent="codex-ui"]')
+    dash.fill("#composerInput", "@")
+    assert dash.locator('[data-testid="mention-popup"]').is_hidden()
+
+
 # ============================================================ rendering
 def test_sidebar_lists_rooms_and_agents(dash, seeded):
     assert dash.locator(f'[data-room="{seeded["room"]}"]').count() == 1
