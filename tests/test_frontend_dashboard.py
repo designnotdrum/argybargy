@@ -3,6 +3,7 @@
 Driven by Playwright *from pytest* — one toolchain (uv + pytest), no Node.
 Install the browser once with:  uv run playwright install chromium
 """
+import json
 import re
 
 import pytest
@@ -140,6 +141,207 @@ def test_dedupe_keeps_the_liveliest_sighting(dash):
       {name:'b',room:'r1',life:'fading', online:false,secondsSinceSeen:3, hue:2,justJoined:false}
     ]).map(function(x){return x.name+':'+x.life})""")
     assert sorted(result) == ["a:online", "b:fading"]
+
+
+# ==================================================== mention pure logic
+# Ported from the design spec's mapping table. dash.evaluate() against
+# window.__argy is this repo's only unit-test mechanism (see the JS units
+# section above) — there is no separate JS test runner to run these in.
+
+def test_resolve_wire_payload_zero_chips_broadcasts(dash):
+    assert dash.evaluate("window.__argy.resolveWirePayload([])") == {
+        "to": "all", "expects_reply": None,
+    }
+
+
+@pytest.mark.parametrize("chips,expected", [
+    ([{"id": "b", "name": "bob", "isEveryone": False, "marker": "default"}],
+     {"to": "bob", "expects_reply": None}),
+    ([{"id": "b", "name": "bob", "isEveryone": False, "marker": "anyone"}],
+     {"to": "bob", "expects_reply": "anyone"}),
+    ([{"id": "b", "name": "bob", "isEveryone": False, "marker": "off"}],
+     {"to": "bob", "expects_reply": "none"}),
+    ([{"id": "e", "name": "everyone", "isEveryone": True, "marker": "default"}],
+     {"to": "all", "expects_reply": None}),
+    ([{"id": "e", "name": "everyone", "isEveryone": True, "marker": "anyone"}],
+     {"to": "all", "expects_reply": "anyone"}),
+    ([{"id": "b", "name": "bob", "isEveryone": False, "marker": "default"},
+      {"id": "a", "name": "alice", "isEveryone": False, "marker": "default"}],
+     {"to": "all", "expects_reply": "bob"}),
+    ([{"id": "b", "name": "bob", "isEveryone": False, "marker": "default"},
+      {"id": "a", "name": "alice", "isEveryone": False, "marker": "anyone"}],
+     {"to": "all", "expects_reply": "anyone"}),
+    ([{"id": "b", "name": "bob", "isEveryone": False, "marker": "default"},
+      {"id": "a", "name": "alice", "isEveryone": False, "marker": "off"}],
+     {"to": "all", "expects_reply": "none"}),
+    ([{"id": "e", "name": "everyone", "isEveryone": True, "marker": "default"},
+      {"id": "b", "name": "bob", "isEveryone": False, "marker": "default"}],
+     {"to": "all", "expects_reply": "bob"}),
+], ids=[
+    "one-peer-default", "one-peer-anyone", "one-peer-off",
+    "everyone-alone-default", "everyone-alone-tapped",
+    "two-peers-default-first-responds", "two-peers-marker-on-second",
+    "two-peers-second-off", "everyone-plus-peer",
+])
+def test_resolve_wire_payload_matrix(dash, chips, expected):
+    result = dash.evaluate(f"window.__argy.resolveWirePayload({json.dumps(chips)})")
+    assert result == expected
+
+
+@pytest.mark.parametrize("marker,expected", [
+    ("default", {"to": "bob", "expects_reply": None}),
+    ("anyone", {"to": "bob", "expects_reply": "anyone"}),
+    ("off", {"to": "bob", "expects_reply": "none"}),
+])
+def test_resolve_dm_payload(dash, marker, expected):
+    result = dash.evaluate(f"window.__argy.resolveDmPayload('bob', {marker!r})")
+    assert result == expected
+
+
+@pytest.mark.parametrize("to,expects_reply,expected", [
+    ("all", None, "none"),   # regression test for the bug this spec fixes
+    ("bob", None, "bob"),
+    ("all", "anyone", "anyone"),
+    ("bob", "none", "none"),
+])
+def test_resolve_expects_for_display(dash, to, expects_reply, expected):
+    arg = "null" if expects_reply is None else repr(expects_reply)
+    result = dash.evaluate(f"window.__argy.resolveExpectsForDisplay({to!r}, {arg})")
+    assert result == expected
+
+
+@pytest.mark.parametrize("dm_agent,to,expected", [
+    ("bob", "all", "bob"),
+    (None, "all", "everyone"),
+    (None, "bob", "bob"),
+])
+def test_resolve_to_for_display(dash, dm_agent, to, expected):
+    arg = "null" if dm_agent is None else repr(dm_agent)
+    result = dash.evaluate(f"window.__argy.resolveToForDisplay({arg}, {to!r})")
+    assert result == expected
+
+
+def test_filter_mention_candidates_empty_query_pins_everyone_first(dash):
+    result = dash.evaluate(
+        "window.__argy.filterMentionCandidates('', ['claude-ui','codex-ui','gemini-ui'])"
+    )
+    assert result == [
+        {"name": "everyone", "isEveryone": True},
+        {"name": "claude-ui", "isEveryone": False},
+        {"name": "codex-ui", "isEveryone": False},
+        {"name": "gemini-ui", "isEveryone": False},
+    ]
+
+
+def test_filter_mention_candidates_prefix_match(dash):
+    result = dash.evaluate(
+        "window.__argy.filterMentionCandidates('cod', ['claude-ui','codex-ui','gemini-ui'])"
+    )
+    assert result == [{"name": "codex-ui", "isEveryone": False}]
+
+
+def test_filter_mention_candidates_eve_matches_only_everyone(dash):
+    result = dash.evaluate(
+        "window.__argy.filterMentionCandidates('eve', ['claude-ui','codex-ui'])"
+    )
+    assert result == [{"name": "everyone", "isEveryone": True}]
+
+
+def test_filter_mention_candidates_no_peers_still_pins_everyone(dash):
+    result = dash.evaluate("window.__argy.filterMentionCandidates('', [])")
+    assert result == [{"name": "everyone", "isEveryone": True}]
+
+
+@pytest.mark.parametrize("text,caret,expected", [
+    ("@bo", 3, {"start": 0, "query": "bo"}),
+    ("hey @bo", 7, {"start": 4, "query": "bo"}),
+    ("email@domain", 12, None),
+    ("hey @bob following up", 10, None),
+    ("just plain text", 6, None),
+    ("@bob", 0, None),
+], ids=[
+    "at-start", "at-after-whitespace", "not-a-word-boundary",
+    "space-closes-trigger", "no-at-at-all", "caret-before-at",
+])
+def test_find_active_trigger(dash, text, caret, expected):
+    result = dash.evaluate(f"window.__argy.findActiveTrigger({text!r}, {caret})")
+    assert result == expected
+
+
+def test_cycle_reply_marker_three_state(dash):
+    assert dash.evaluate("window.__argy.cycleReplyMarker('default')") == "anyone"
+    assert dash.evaluate("window.__argy.cycleReplyMarker('anyone')") == "off"
+    assert dash.evaluate("window.__argy.cycleReplyMarker('off')") == "default"
+
+
+def test_cycle_chip_marker_peer_is_three_state(dash):
+    chip = {"id": "b", "name": "bob", "isEveryone": False, "marker": "default"}
+    assert dash.evaluate(f"window.__argy.cycleChipMarker({json.dumps(chip)})") == "anyone"
+    chip["marker"] = "anyone"
+    assert dash.evaluate(f"window.__argy.cycleChipMarker({json.dumps(chip)})") == "off"
+    chip["marker"] = "off"
+    assert dash.evaluate(f"window.__argy.cycleChipMarker({json.dumps(chip)})") == "default"
+
+
+def test_cycle_chip_marker_everyone_is_two_state(dash):
+    chip = {"id": "e", "name": "everyone", "isEveryone": True, "marker": "default"}
+    assert dash.evaluate(f"window.__argy.cycleChipMarker({json.dumps(chip)})") == "anyone"
+    chip["marker"] = "anyone"
+    assert dash.evaluate(f"window.__argy.cycleChipMarker({json.dumps(chip)})") == "default"
+
+
+def test_tap_chip_marker_moves_marker_and_clears_other_peer_chips(dash):
+    chips = [
+        {"id": "b", "name": "bob", "isEveryone": False, "marker": "anyone"},
+        {"id": "a", "name": "alice", "isEveryone": False, "marker": "default"},
+    ]
+    result = dash.evaluate(f"window.__argy.tapChipMarker({json.dumps(chips)}, 'a')")
+    by_id = {c["id"]: c for c in result}
+    assert by_id["a"]["marker"] == "anyone"
+    assert by_id["b"]["marker"] == "default"
+
+
+def test_tap_chip_marker_leaves_everyone_chip_untouched(dash):
+    chips = [
+        {"id": "e", "name": "everyone", "isEveryone": True, "marker": "anyone"},
+        {"id": "b", "name": "bob", "isEveryone": False, "marker": "default"},
+    ]
+    result = dash.evaluate(f"window.__argy.tapChipMarker({json.dumps(chips)}, 'b')")
+    by_id = {c["id"]: c for c in result}
+    assert by_id["e"]["marker"] == "anyone"
+    assert by_id["b"]["marker"] == "anyone"
+
+
+def test_tap_chip_marker_unknown_id_is_a_no_op(dash):
+    chips = [{"id": "b", "name": "bob", "isEveryone": False, "marker": "default"}]
+    result = dash.evaluate(f"window.__argy.tapChipMarker({json.dumps(chips)}, 'missing')")
+    assert result == chips
+
+
+@pytest.mark.parametrize("chips,body,expected", [
+    ([], "hello", "hello"),
+    ([{"id": "b", "name": "bob", "isEveryone": False, "marker": "default"}], "", "@bob"),
+    ([{"id": "b", "name": "bob", "isEveryone": False, "marker": "default"}], "ping",
+     "@bob ping"),
+    ([{"id": "b", "name": "bob", "isEveryone": False, "marker": "default"},
+      {"id": "a", "name": "alice", "isEveryone": False, "marker": "default"}], "",
+     "@bob @alice"),
+    ([{"id": "b", "name": "bob", "isEveryone": False, "marker": "default"},
+      {"id": "a", "name": "alice", "isEveryone": False, "marker": "default"}], "sync up",
+     "@bob @alice sync up"),
+    ([], "", ""),
+], ids=[
+    "no-chips", "one-chip-no-body", "one-chip-with-body",
+    "two-chips-no-body", "two-chips-with-body", "nothing-at-all",
+])
+def test_serialize_message_text(dash, chips, body, expected):
+    result = dash.evaluate(f"window.__argy.serializeMessageText({json.dumps(chips)}, {body!r})")
+    assert result == expected
+
+
+def test_next_chip_id_is_unique_per_call(dash):
+    a, b = dash.evaluate("[window.__argy.nextChipId(), window.__argy.nextChipId()]")
+    assert a != b
 
 
 # ============================================================ rendering

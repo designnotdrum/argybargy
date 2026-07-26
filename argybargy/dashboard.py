@@ -301,6 +301,150 @@ DASHBOARD_HTML = r"""<!doctype html>
     return null;
   }
 
+  /* --------------------------------------------------------------- mentions */
+  /* Pure @mention data model + wire-mapping logic. No DOM in this section —
+     the composer section below is the only consumer. This is the ONLY code
+     that decides {to, expects_reply} from committed chips; doSend() must
+     never duplicate this logic (design doc: docs/superpowers/specs/
+     2026-07-25-argybargy-attag-composer-design.md, "Mention semantics"). */
+  var chipIdCounter = 0;
+  /* Fresh id for a newly-committed chip. Not persisted — only needs to be
+     unique within one composer's lifetime for marker-tap targeting. */
+  function nextChipId() {
+    chipIdCounter += 1;
+    return "chip-" + chipIdCounter;
+  }
+  /* 3-state cycle used by a DM's own reply marker (there is no chip to
+     attach it to in a DM — see resolveDmPayload) and reused below by
+     cycleChipMarker for peer chips. */
+  function cycleReplyMarker(marker) {
+    var order = ["default", "anyone", "off"];
+    var i = order.indexOf(marker);
+    return order[(i + 1) % order.length];
+  }
+  /* Cycles one chip's reply marker. @everyone alone is a 2-state cycle
+     (default <-> anyone) since a third "off" state would be redundant — the
+     default already resolves to "none". Peer chips are 3-state. */
+  function cycleChipMarker(chip) {
+    if (chip.isEveryone) { return chip.marker === "default" ? "anyone" : "default"; }
+    return cycleReplyMarker(chip.marker);
+  }
+  /* Taps one chip's marker forward and clears every OTHER peer chip back to
+     "default" — only one peer chip holds the reply marker at a time. The
+     @everyone chip's own marker is independent of peer chips and is left
+     alone when a peer chip is tapped. A tap on an id not present is a no-op
+     (returns the chips array with equal contents, unchanged). */
+  function tapChipMarker(chips, chipId) {
+    var tapped = null;
+    for (var i = 0; i < chips.length; i++) {
+      if (chips[i].id === chipId) { tapped = chips[i]; break; }
+    }
+    if (!tapped) { return chips; }
+    var nextMarker = cycleChipMarker(tapped);
+    return chips.map(function (c) {
+      if (c.id === chipId) { return Object.assign({}, c, { marker: nextMarker }); }
+      if (c.isEveryone) { return c; }
+      return Object.assign({}, c, { marker: "default" });
+    });
+  }
+  /* Resolves the {to, expects_reply} payload for a ROOM-view send from the
+     composer's committed chips. Returns expects_reply: null whenever the
+     server's own default formula (argybargy/app.py:341, admin_say) already
+     lands on the right value — doSend() keeps relying on that default rather
+     than reproducing it; only the states the server cannot infer (an
+     explicit multi-chip responder, or an explicit "off") get an explicit
+     string here. Two or more peer chips always force to:"all": to is the
+     delivery filter (argybargy/store.py:75's "recipient=? OR recipient='all'"
+     clause), so routing to only one mentioned peer would silently drop the
+     message for the others. */
+  function resolveWirePayload(chips) {
+    if (chips.length === 0) { return { to: "all", expects_reply: null }; }
+    var everyoneChip = chips.filter(function (c) { return c.isEveryone; })[0] || null;
+    var peerChips = chips.filter(function (c) { return !c.isEveryone; });
+    if (everyoneChip && peerChips.length === 0) {
+      return { to: "all", expects_reply: everyoneChip.marker === "anyone" ? "anyone" : null };
+    }
+    if (!everyoneChip && peerChips.length === 1) {
+      var only = peerChips[0];
+      if (only.marker === "anyone") { return { to: only.name, expects_reply: "anyone" }; }
+      if (only.marker === "off") { return { to: only.name, expects_reply: "none" }; }
+      return { to: only.name, expects_reply: null };
+    }
+    var responder = null;
+    for (var j = 0; j < peerChips.length; j++) {
+      if (peerChips[j].marker !== "default") { responder = peerChips[j]; break; }
+    }
+    if (!responder) { responder = peerChips[0]; }
+    if (responder.marker === "anyone") { return { to: "all", expects_reply: "anyone" }; }
+    if (responder.marker === "off") { return { to: "all", expects_reply: "none" }; }
+    return { to: "all", expects_reply: responder.name };
+  }
+  /* Resolves the {to, expects_reply} payload for a DM send. to is always
+     locked to dmAgent; expects_reply comes from the DM's own 3-state marker,
+     cycled by tapping the wire-preview strip. */
+  function resolveDmPayload(dmAgent, dmReplyMarker) {
+    if (dmReplyMarker === "anyone") { return { to: dmAgent, expects_reply: "anyone" }; }
+    if (dmReplyMarker === "off") { return { to: dmAgent, expects_reply: "none" }; }
+    return { to: dmAgent, expects_reply: null };
+  }
+  /* Mirrors the relay's own default-resolution formula (argybargy/app.py:341)
+     as a pure, display-only computation for the wire-preview strip. Never
+     used to decide what doSend() actually sends — the send path always lets
+     the server apply its own default when no explicit value has been set. */
+  function resolveExpectsForDisplay(to, expectsReply) {
+    var trimmed = (expectsReply || "").trim();
+    return trimmed || (to === "all" ? "none" : to);
+  }
+  /* Display form of "to", matching the removed to-pill's own convention
+     (dm ? dm : (to === "all" ? "everyone" : to)). */
+  function resolveToForDisplay(dmAgent, to) {
+    if (dmAgent) { return dmAgent; }
+    return to === "all" ? "everyone" : to;
+  }
+  /* Candidate list for the @ popup: "everyone" pinned first, then peers in
+     the order onlinePeerNames provides them, filtered by query as a
+     case-insensitive prefix match (empty query returns every candidate).
+     Callers are expected to have already excluded offline peers / the
+     operator from onlinePeerNames — mirrors the removed to-menu's own filter
+     (S.agents.filter(online && room && name !== "operator"), dashboard.py:509-511)
+     verbatim; this function does no presence filtering of its own. */
+  function filterMentionCandidates(query, onlinePeerNames) {
+    var all = [{ name: "everyone", isEveryone: true }].concat(
+      onlinePeerNames.map(function (n) { return { name: n, isEveryone: false }; })
+    );
+    var q = (query || "").toLowerCase();
+    if (!q) { return all; }
+    return all.filter(function (c) { return c.name.toLowerCase().indexOf(q) === 0; });
+  }
+  /* Finds an active @query trigger ending exactly at caret within text. @
+     must be at the start of text or preceded by whitespace (so
+     email@domain is never misread as a trigger), and the query (text
+     between @ and the caret) must not itself contain whitespace — a space
+     closes the trigger. Returns null when no trigger is active at the caret. */
+  function findActiveTrigger(text, caret) {
+    var upToCaret = text.slice(0, caret);
+    var at = upToCaret.lastIndexOf("@");
+    if (at === -1) { return null; }
+    var boundary = at === 0 || /\s/.test(upToCaret[at - 1]);
+    if (!boundary) { return null; }
+    var query = upToCaret.slice(at + 1);
+    if (/\s/.test(query)) { return null; }
+    return { start: at, query: query };
+  }
+  /* Serializes committed chips + the typed body into the literal string sent
+     as "text" on the wire. Chips render in a RAIL, not inline in the input
+     (see the composer section's [design call] docblock below), so this
+     prepends each chip as "@name" in commit order ahead of the typed body,
+     rather than splicing at a caret position. This is the only way a
+     non-dashboard client (curl, another agent) can tell who was mentioned,
+     since the wire has no separate mentions field. */
+  function serializeMessageText(chips, bodyText) {
+    var trimmedBody = (bodyText || "").trim();
+    if (chips.length === 0) { return trimmedBody; }
+    var prefix = chips.map(function (c) { return "@" + c.name; }).join(" ");
+    return trimmedBody ? prefix + " " + trimmedBody : prefix;
+  }
+
   /* --------------------------------------------------------------- sidebar */
   function renderSidebar() {
     var nav = document.getElementById("sbNav");
@@ -975,7 +1119,14 @@ DASHBOARD_HTML = r"""<!doctype html>
      Read-only maths on strings/numbers: no state, no network, no DOM writes. */
   window.__argy = {
     hueFor: hueFor, glyphFor: glyphFor, brandAccent: brandAccent,
-    lastSeen: lastSeen, elapsedSince: elapsedSince, dedupe: dedupe
+    lastSeen: lastSeen, elapsedSince: elapsedSince, dedupe: dedupe,
+    nextChipId: nextChipId, cycleReplyMarker: cycleReplyMarker,
+    cycleChipMarker: cycleChipMarker, tapChipMarker: tapChipMarker,
+    resolveWirePayload: resolveWirePayload, resolveDmPayload: resolveDmPayload,
+    resolveExpectsForDisplay: resolveExpectsForDisplay,
+    resolveToForDisplay: resolveToForDisplay,
+    filterMentionCandidates: filterMentionCandidates,
+    findActiveTrigger: findActiveTrigger, serializeMessageText: serializeMessageText
   };
 
   /* ------------------------------------------------------------------ boot */
