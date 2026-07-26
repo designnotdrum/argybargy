@@ -103,9 +103,10 @@ DASHBOARD_HTML = r"""<!doctype html>
 .conv-noroom__body{margin:0 0 8px;color:var(--muted);font-size:12px}
 .conv-noroom__cta{display:flex;align-items:center;gap:6px;padding:7px 14px;border:1px solid var(--border-strong);border-radius:8px;background:var(--raised);color:var(--text);font-size:12px;cursor:pointer;margin:0 auto}
 .conv-composer__mentions-wrap{position:relative}
-.conv-chip-rail{display:flex;flex-wrap:wrap;gap:6px;padding:8px 12px 0}
+.conv-chip-rail{display:flex;flex-wrap:wrap;gap:8px;padding:10px 12px 0}
 .conv-chip-rail[hidden]{display:none}
-.conv-chip{display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 8px 0 4px;font-size:12px;font-weight:500;color:var(--agent, var(--muted));background:color-mix(in srgb, var(--agent, var(--border)) 12%, transparent);border:1px solid color-mix(in srgb, var(--agent, var(--border)) 38%, transparent);border-radius:999px}
+.conv-chip{display:inline-flex;align-items:center;gap:8px;height:22px;padding:0 9px;font-size:12px;font-weight:500;color:var(--agent, var(--muted));background:color-mix(in srgb, var(--agent, var(--border)) 12%, transparent);border:1px solid color-mix(in srgb, var(--agent, var(--border)) 38%, transparent);border-radius:999px}
+.conv-composer__frame{border-radius:8px}
 .conv-chip--armed{color:var(--amber);background:var(--amber-dim);border-color:color-mix(in srgb, var(--amber) 42%, transparent)}
 .conv-chip__marker{font-size:9px;text-transform:uppercase;letter-spacing:.06em;opacity:.85}
 .conv-mention-popup{left:12px;max-height:220px;overflow-y:auto}
