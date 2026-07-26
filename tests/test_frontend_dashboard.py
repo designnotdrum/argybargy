@@ -325,7 +325,11 @@ def test_sidebar_and_conversation_pane_show_a_create_room_cta_with_zero_rooms(pa
     assert "No rooms yet" in page.locator('[data-testid="sidebar"]').inner_text()
     assert "No rooms yet" in page.locator('[data-testid="conversation-pane"]').inner_text()
 
-    page.click("#sbEmptyCreateRoom")
+    # The sidebar states the fact only — the "+" in the Rooms header is already
+    # the create affordance there, so a second button would be redundant. The
+    # conversation pane carries the actual call to action.
+    assert page.locator("#sbEmptyCreateRoom").count() == 0
+    page.click("#convNoRoomCreate")
     page.wait_for_selector("#crRoot")
 
 
