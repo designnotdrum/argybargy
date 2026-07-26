@@ -278,6 +278,48 @@ def test_invite_action_offers_agents_from_other_rooms_not_the_admin_panel(dash, 
     codes = client.get("/admin/state", headers=admin_headers).json()["codes"]
     assert any(c["name"] == "elsewhere-bot" and c["room"] == seeded["room"] for c in codes)
 
+    # The human's next step is the connect instruction, not a bare token.
+    assert "Authorization: Bearer" in dash.locator("#ipInstruction").inner_text()
+
+    # And the agent is visibly in the room straight away, marked as pending.
+    dash.click("#ipClose")
+    row = dash.locator('[data-invited="elsewhere-bot"]')
+    assert row.count() == 1
+    assert "not connected yet" in row.inner_text()
+
+
+def test_create_room_offers_existing_agents_and_shows_only_a_code_for_them(dash, client, admin_headers, seeded):
+    dash.click("#openCreateRoom")
+    dash.wait_for_selector("#crRoot")
+
+    # Agents already on the mesh are pickable rather than retyped.
+    existing = sorted(seeded["codes"])[0]
+    dash.click(f'[data-create-pick="{existing}"]')
+    assert dash.locator("#crName").input_value() == existing
+
+    dash.fill("#crRoom", "picked-room")
+    dash.click("#crSubmit")
+    dash.wait_for_selector("#crOut .ad-resultbox", timeout=10000)
+
+    # Known agent: it already speaks the protocol, so it only needs the code —
+    # not the whole connect spiel.
+    out = dash.locator("#crOut").inner_text()
+    assert "code for the new room" in out
+    assert "Authorization: Bearer" not in out
+
+    codes = client.get("/admin/state", headers=admin_headers).json()["codes"]
+    assert any(c["name"] == existing and c["room"] == "picked-room" for c in codes)
+
+
+def test_create_room_gives_a_brand_new_agent_the_full_connect_instruction(dash):
+    dash.click("#openCreateRoom")
+    dash.wait_for_selector("#crRoot")
+    dash.fill("#crRoom", "greenfield")
+    dash.fill("#crName", "never-seen-before")
+    dash.click("#crSubmit")
+    dash.wait_for_selector("#crOut .ad-resultbox", timeout=10000)
+    assert "Authorization: Bearer" in dash.locator("#crOut").inner_text()
+
 
 def test_invite_picker_excludes_agents_already_in_the_room(dash, seeded):
     dash.click("#convInviteBtn")
@@ -372,6 +414,45 @@ def test_delete_room_dialog_can_be_cancelled(dash, client, admin_headers):
 
     state = client.get("/admin/state", headers=admin_headers).json()
     assert any(c["room"] == "spared-room" for c in state["codes"]), "cancel must not delete anything"
+
+
+def test_deleting_the_room_you_are_viewing_from_a_dm_does_not_leave_a_dangling_view(dash, client, admin_headers):
+    """Every other delete test deletes some other room. This one deletes the room
+    currently being viewed while parked in a DM sub-view inside it — the case where
+    S.view kept pointing at a room that no longer existed, the composer stayed live,
+    and there was no reachable listener left for whatever got sent into it."""
+    code = client.post("/admin/invite", headers=admin_headers,
+                        json={"name": "doomed-agent", "room": "doomed-room"}).json()["code"]
+    # A merely-invited (not-yet-connected) agent renders as data-invited, not
+    # data-agent, and isn't clickable into a DM — so make it check in first.
+    client.get("/whoami", headers={"Authorization": f"Bearer {code}"})
+    dash.wait_for_selector('[data-room="doomed-room"]', timeout=15000)
+
+    dash.click('[data-room="doomed-room"]')
+    dash.wait_for_selector('[data-agent="doomed-agent"]', timeout=15000)
+    dash.click('[data-agent="doomed-agent"]')
+    assert dash.locator('[data-testid="channel-title"]').inner_text() == "doomed-agent"
+
+    dash.hover('[data-room="doomed-room"]')
+    dash.click('[data-room-menu="doomed-room"]')
+    dash.click('[data-delete-room="doomed-room"]')
+    dash.wait_for_selector('[data-testid="delete-room-dialog"]')
+    dash.fill("#drdConfirmInput", "doomed-room")
+    dash.click("#drdConfirm")
+    dash.wait_for_selector('[data-testid="delete-room-dialog"]', state="detached", timeout=15000)
+
+    # The next poll must snap the dangling DM view back to a room that still
+    # exists — not leave the header/composer pointed at a room nobody can read.
+    dash.wait_for_function(
+        "() => document.querySelector('[data-testid=\"channel-title\"]').textContent !== 'doomed-agent'",
+        timeout=15000,
+    )
+    assert dash.locator("#backToRoom").count() == 0
+    assert dash.locator(".conv-header__filterchip").count() == 0
+    placeholder = dash.locator("#composerInput").get_attribute("placeholder")
+    assert placeholder != "Message @doomed-agent"
+    assert placeholder.startswith("Message #")
+    assert dash.locator('[data-room="doomed-room"]').count() == 0
 
 
 def test_sidebar_and_conversation_pane_show_a_create_room_cta_with_zero_rooms(page, live_server, admin_headers):

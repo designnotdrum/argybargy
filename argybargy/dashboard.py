@@ -80,6 +80,9 @@ DASHBOARD_HTML = r"""<!doctype html>
 .drd-btn.danger{border-color:var(--red);color:var(--red)}
 .drd-btn:disabled{opacity:.5;cursor:not-allowed}
 .drd-errorbox{margin-top:8px;padding:6px 8px;border:1px solid var(--red-dim);border-radius:6px;background:var(--red-dim);color:var(--red);font-size:11px}
+.sb-arow--invited{opacity:.5}
+.sb-arow--invited .sb-av{filter:grayscale(1)}
+.ip-res__lead{margin-bottom:6px}
 .ip-scrim{position:fixed;inset:0;z-index:45;border:none;background:var(--scrim);cursor:default}
 .ip-wrap{position:fixed;top:52px;right:16px;z-index:46}
 .ip-root{width:min(300px,calc(100vw - 32px));padding:12px;border:1px solid var(--border-strong);border-radius:10px;background:var(--surface);color:var(--text);box-shadow:var(--pop-shadow)}
@@ -466,6 +469,11 @@ DASHBOARD_HTML = r"""<!doctype html>
       E("span", "sb-n", { text: "· " + onlineCount })));
     var al = E("div", null, { "data-testid": "agent-list" });
     visible.forEach(function (a) { al.appendChild(agentRow(a, shown(a), false)); });
+    /* Minted a code but never connected: the agent belongs to the room as far
+       as the relay is concerned, so show it here rather than leaving the
+       invite looking like it did nothing. Dimmed and labelled, because it
+       can't actually be talked to until it redeems the code. */
+    invitedNames().forEach(function (n) { al.appendChild(invitedRow(n)); });
     out.appendChild(al);
 
     if (offline.length) {
@@ -519,6 +527,34 @@ DASHBOARD_HTML = r"""<!doctype html>
     b.appendChild(E("span", "sb-alast mono",
       { "data-testid": "last-seen", text: a.life === "online" ? "online" : lastSeen(seconds) + " ago" }));
     return b;
+  }
+
+  /* Names holding a code somewhere but with no live presence anywhere — i.e.
+     invited and not yet connected. A name that's live in another room is not
+     "invited"; it's just elsewhere, and dedupe already surfaces it. */
+  function invitedNames() {
+    var live = {};
+    var peers = (S.data && S.data.peers) || {};
+    Object.keys(peers).forEach(function (room) {
+      peers[room].forEach(function (p) { live[p.name] = 1; });
+    });
+    var seen = {};
+    var out = [];
+    ((S.data && S.data.codes) || []).forEach(function (c) {
+      if (c.room === S.view.room && !live[c.name] && !seen[c.name]) {
+        seen[c.name] = 1;
+        out.push(c.name);
+      }
+    });
+    return out.sort(function (a, b) { return a.localeCompare(b); });
+  }
+  function invitedRow(name) {
+    var row = E("div", "sb-arow sb-arow--invited", { "data-invited": name });
+    row.appendChild(avatar(name, "row", false));
+    row.appendChild(E("div", "sb-atext", null,
+      E("span", "sb-aname", { text: name }),
+      E("span", "sb-astatus", { text: "invited — not connected yet" })));
+    return row;
   }
 
   function roomRow(r, archived) {
@@ -854,8 +890,20 @@ DASHBOARD_HTML = r"""<!doctype html>
     root.appendChild(E("div", "crp-frow", null,
       E("input", "crp-field", { id: "crRoom", autocomplete: "off", placeholder: "room name", "aria-label": "Room name" })));
     root.appendChild(E("p", "crp-hint", { id: "crHint" }));
+    /* A room can't exist without at least one agent, so the first one is picked
+       here. Same shape as the invite picker: choose someone already on the mesh,
+       or type a name for an agent that doesn't exist yet. */
+    var known = knownAgentNames();
+    if (known.length) {
+      var picks = E("div", "ip-list", { "data-testid": "create-room-candidates" });
+      known.forEach(function (n) {
+        picks.appendChild(E("button", "ip-item", { type: "button", "data-create-pick": n },
+          avatar(n, "sm"), E("span", "ip-item__name", { text: n })));
+      });
+      root.appendChild(picks);
+    }
     root.appendChild(E("div", "crp-frow", null,
-      E("input", "crp-field", { id: "crName", autocomplete: "off", placeholder: "first agent name", "aria-label": "First agent name" })));
+      E("input", "crp-field", { id: "crName", autocomplete: "off", placeholder: known.length ? "or a new agent name" : "first agent name", "aria-label": "First agent name" })));
     var expSel = E("select", "crp-field", { id: "crExpiry", "aria-label": "Expiry" });
     EXPIRY_OPTIONS.forEach(function (o) { expSel.appendChild(E("option", null, { value: o[0], text: o[1] })); });
     root.appendChild(E("div", "crp-frow", null, expSel,
@@ -882,13 +930,19 @@ DASHBOARD_HTML = r"""<!doctype html>
     }).then(function (r) {
       S.createRoom.pending = false;
       out.textContent = "";
+      /* An agent already on the mesh knows the relay and the protocol — it just
+         needs the code for this new room. One that doesn't exist yet needs the
+         whole connect instruction. Show each only what it's missing. */
+      var wasKnown = S.createRoom.knownAtOpen.indexOf(r.name || name) >= 0;
+      var payload = wasKnown ? r.code : (r.instruction || r.code);
       out.appendChild(E("div", "ad-resultbox", null,
-        "Key for ", E("b", null, { text: r.name || name }), " in ",
-        E("b", null, { text: "#" + (r.room || room) }),
-        E("div", "ad-code", { text: r.code }),
+        E("b", null, { text: r.name || name }), " is in ",
+        E("b", null, { text: "#" + (r.room || room) }), ". ",
+        wasKnown ? "Give it this code for the new room:" : "Paste this to it to connect:",
+        E("div", "ad-code", { text: payload }),
         E("div", null, { style: "margin-top:7px" },
-          E("button", "ad-btn", { type: "button", "data-copykey": r.code, "aria-label": "created" },
-            icon("copy", 12), " Copy code")),
+          E("button", "ad-btn", { type: "button", "data-copykey": payload, "aria-label": "created" },
+            icon("copy", 12), " Copy")),
         E("p", "ad-hint", null, "Copy it now — with hashing on it will not be shown again.")));
       return poll();
     }).catch(function () {
@@ -940,25 +994,32 @@ DASHBOARD_HTML = r"""<!doctype html>
       E("span", null, { text: "Invite into #" + room }),
       E("button", "ip-close", { type: "button", id: "ipClose", "aria-label": "Close invite" }, "×")));
     if (S.invitePicker.result) {
+      /* The relay can't push a credential into an agent that's already running
+         somewhere else, so the one thing a human still has to do is hand this
+         over. Lead with that instruction — a bare token doesn't say what to do
+         next. The agent shows up in the room's roster as "invited" the moment
+         this is minted, so the room membership itself needs no explaining. */
       var res = S.invitePicker.result;
       root.appendChild(E("div", "ad-resultbox", null,
-        E("div", null, { text: res.name + " can join #" + res.room + " with:" }),
-        E("div", "ad-code", { text: res.code })));
+        E("div", "ip-res__lead", { text: res.name + " is in #" + res.room + ". Paste this to it to connect:" }),
+        E("div", "ad-code", { id: "ipInstruction", text: res.instruction || res.code }),
+        E("button", "ip-btn", { type: "button", id: "ipCopy" }, "Copy")));
     } else {
+      var pending = S.invitePicker.pending;
       var candidates = agentsNotInRoom(room);
       if (candidates.length) {
         var list = E("div", "ip-list", { "data-testid": "invite-candidates" });
         candidates.forEach(function (n) {
-          list.appendChild(E("button", "ip-item", { type: "button", "data-invite-name": n },
-            avatar(n, "sm"), E("span", "ip-item__name", { text: n })));
+          list.appendChild(E("button", "ip-item", { type: "button", "data-invite-name": n, disabled: !!pending },
+            avatar(n, "sm"), E("span", "ip-item__name", { text: pending === n ? "Inviting…" : n })));
         });
         root.appendChild(list);
       } else {
         root.appendChild(E("p", "ip-empty", null, "Every agent on the mesh is already in this room."));
       }
       root.appendChild(E("div", "ip-newrow", null,
-        E("input", "ip-field", { id: "ipNewName", autocomplete: "off", placeholder: "or a new agent name" }),
-        E("button", "ip-btn", { type: "button", id: "ipNewSubmit" }, "Invite")));
+        E("input", "ip-field", { id: "ipNewName", autocomplete: "off", placeholder: "or a new agent name", disabled: !!pending }),
+        E("button", "ip-btn", { type: "button", id: "ipNewSubmit", disabled: !!pending }, pending ? "Inviting…" : "Invite")));
     }
     wrap.textContent = "";
     wrap.appendChild(root);
@@ -966,6 +1027,7 @@ DASHBOARD_HTML = r"""<!doctype html>
   function doInviteExisting(name) {
     if (!S.invitePicker || S.invitePicker.pending) { return; }
     S.invitePicker.pending = name;
+    renderInvitePicker();
     api("/admin/invite", { name: name, room: S.invitePicker.room }).then(function (j) {
       S.invitePicker.pending = null;
       S.invitePicker.result = j;
@@ -1068,7 +1130,7 @@ DASHBOARD_HTML = r"""<!doctype html>
           S.agents = reconcile(j);
           S.conn = "live";
           var rooms = roomList();
-          if (rooms.length && S.view.kind === "room" && rooms.indexOf(S.view.room) < 0) {
+          if (rooms.length && (S.view.kind === "room" || S.view.kind === "dm") && rooms.indexOf(S.view.room) < 0) {
             S.view = { kind: "room", room: rooms[0], agent: null };
           }
           renderAll();
@@ -1278,6 +1340,12 @@ DASHBOARD_HTML = r"""<!doctype html>
         doInviteExisting(t.getAttribute("data-invite-name"));
         return;
       }
+      if (t.hasAttribute("data-create-pick")) {
+        var pickName = document.getElementById("crName");
+        if (pickName) { pickName.value = t.getAttribute("data-create-pick"); }
+        refreshCreateRoomHint();
+        return;
+      }
       if (t.hasAttribute("data-delete-room")) {
         var deleteTarget = t.getAttribute("data-delete-room");
         S.roomMenuOpen = null;
@@ -1309,7 +1377,10 @@ DASHBOARD_HTML = r"""<!doctype html>
       switch (id) {
         case "navOpen": S.navOpen = true; renderAll(); break;
         case "openCreateRoom": case "convNoRoomCreate":
-          S.createRoom = { open: true, pending: false };
+          /* Snapshot who's already on the mesh at open time — after the mint
+             the new name is in codes too, so asking "was this a new agent?"
+             afterwards would always answer no. */
+          S.createRoom = { open: true, pending: false, knownAtOpen: knownAgentNames() };
           renderCreateRoom();
           break;
         case "crClose": case "crScrim": {
@@ -1337,6 +1408,10 @@ DASHBOARD_HTML = r"""<!doctype html>
         case "ipClose": case "ipScrim":
           S.invitePicker = null;
           renderInvitePicker();
+          break;
+        case "ipCopy":
+          copyText((S.invitePicker && S.invitePicker.result &&
+                    (S.invitePicker.result.instruction || S.invitePicker.result.code)) || "", "ipCopy");
           break;
         case "ipNewSubmit": {
           var newName = (document.getElementById("ipNewName") || {}).value || "";
