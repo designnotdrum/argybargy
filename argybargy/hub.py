@@ -48,6 +48,13 @@ class Hub:
         if note_provided:
             entry["note"] = note
 
+    def clear_status(self, room: str, peer: str) -> None:
+        """Drop a peer's status entry — call when their code is revoked, so a name
+        reissued in the same room doesn't inherit the previous incarnation's status
+        note. `_last_seen` needs no equivalent: it self-corrects on the next touch,
+        where a stale note would otherwise just sit there unwritten."""
+        self._status.get(room, {}).pop(peer, None)
+
     def status_for(self, room: str, peer: str) -> dict:
         """A single peer's status, with staleness derived the same way peers() does."""
         now = time.monotonic()

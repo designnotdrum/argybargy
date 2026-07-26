@@ -113,6 +113,17 @@ class CodeStore:
             rows = self._db.execute("SELECT name, capabilities FROM codes WHERE room = ?", (room,)).fetchall()
         return {r["name"]: (r["capabilities"] or "") for r in rows}
 
+    def peers_matching(self, name_or_code: str) -> list[tuple[str, str]]:
+        """(room, name) pairs a revoke of this target would affect — call before
+        revoke() if the caller needs to clean up per-peer state elsewhere (e.g. the
+        hub's in-memory status), since the rows are gone once revoke() returns."""
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT room, name FROM codes WHERE name = ? OR code = ? OR code = ?",
+                (name_or_code, name_or_code, _hash(name_or_code)),
+            ).fetchall()
+        return [(r["room"], r["name"]) for r in rows]
+
     def revoke(self, name_or_code: str) -> int:
         with self._lock:
             cur = self._db.execute(

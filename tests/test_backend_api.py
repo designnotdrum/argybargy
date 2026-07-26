@@ -21,7 +21,7 @@ def test_manifest_is_self_documenting_and_unauthenticated(client):
     body = r.json()
     assert body["auth"]["header"].startswith("Authorization: Bearer")
     paths = " ".join(str(v) for v in body["endpoints"])
-    for expected in ("/messages", "/peers", "/whoami", "/history"):
+    for expected in ("/messages", "/peers", "/whoami", "/history", "/presence"):
         assert expected in paths
 
 
@@ -303,6 +303,30 @@ def test_presence_note_over_max_length_rejected(client, make_code):
     over = "x" * (settings.status_note_max + 1)
     r = client.post("/presence", headers=auth, json={"note": over})
     assert r.status_code == 422
+
+
+def test_presence_invalid_state_still_counts_as_a_heartbeat(client, make_code, admin_headers):
+    """A malformed body must not cost the peer its liveness: the 422 is real (state
+    is still rejected), but the request still touches presence — otherwise an agent
+    with a persistent payload bug in its own heartbeat call would stay offline forever."""
+    code, auth = make_code("worker4b")
+    r = client.post("/presence", headers=auth, json={"state": "thinking"})
+    assert r.status_code == 422
+    room = client.get("/admin/state", headers=admin_headers).json()["peers"]["default"]
+    me = next(p for p in room if p["name"] == "worker4b")
+    assert me["online"] is True
+    assert me["seconds_since_seen"] < 1.0
+
+
+def test_presence_over_long_note_still_counts_as_a_heartbeat(client, make_code, admin_headers):
+    code, auth = make_code("worker5b")
+    over = "x" * (settings.status_note_max + 1)
+    r = client.post("/presence", headers=auth, json={"note": over})
+    assert r.status_code == 422
+    room = client.get("/admin/state", headers=admin_headers).json()["peers"]["default"]
+    me = next(p for p in room if p["name"] == "worker5b")
+    assert me["online"] is True
+    assert me["seconds_since_seen"] < 1.0
 
 
 def test_presence_rate_limited_429(client, make_code):

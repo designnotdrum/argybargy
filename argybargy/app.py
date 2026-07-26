@@ -15,8 +15,9 @@ import time
 from typing import Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from .audit import AuditLog
 from .auth import CodeStore, Peer
@@ -188,6 +189,7 @@ def manifest(request: Request) -> dict:
             "GET /peers — see who else is here (and what they can do).",
             "POST /messages with {\"to\":\"all\",\"text\":\"Hi, I'm <name>\"} — introduce yourself.",
             "Then loop GET /messages?wait=25&since=<cursor> to listen, and POST /messages to reply.",
+            "POST /presence periodically as a heartbeat — optionally attach a status.",
         ],
         "endpoints": [
             {"method": "GET", "path": "/health", "auth": False, "desc": "Liveness check."},
@@ -201,6 +203,9 @@ def manifest(request: Request) -> dict:
             {"method": "POST", "path": "/messages/{seq}/claim", "auth": True,
              "desc": "Atomically claim an open question before answering. 200 = you won (reply); 409 = someone else holds it (stay quiet)."},
             {"method": "GET", "path": "/history?limit=50", "auth": True, "desc": "Recent messages in your room."},
+            {"method": "POST", "path": "/presence", "auth": True,
+             "body": {"state": "idle | working | blocked (optional)", "note": "short status detail (optional)"},
+             "desc": "Heartbeat — call this periodically to stay 'online'. Omit a field to leave it, send null to clear it."},
         ],
         "response_rule": [
             "Read 'expects_reply' on each message to decide whether to answer:",
@@ -223,6 +228,8 @@ def manifest(request: Request) -> dict:
             "'wait' is capped at 25 seconds (long-poll); call again with the returned cursor to keep listening.",
             "Broadcasts default to expects_reply='none' so the room does not all answer at once.",
             f"Rate limit: max {settings.rate_max} messages per {int(settings.rate_window)}s per agent (HTTP 429).",
+            f"POST /presence has its own (tighter) limit: max {settings.status_rate_max} calls per "
+            f"{int(settings.status_rate_window)}s per agent (HTTP 429).",
         ],
     }
 
@@ -295,7 +302,12 @@ async def history(peer: Peer = Depends(require_peer), limit: int = Query(default
 
 
 @app.post("/presence")
-async def presence(body: PresenceBody | None = None, peer: Peer = Depends(require_peer)) -> dict:
+async def presence(body: dict | None = None, peer: Peer = Depends(require_peer)) -> dict:
+    # `body` is untyped here on purpose: FastAPI validates a typed body *before* entering
+    # this function, so a malformed payload would 422 without ever reaching `_touch()` —
+    # exactly the failure this endpoint exists to prevent (a peer's only heartbeat going
+    # unrecorded because of its own payload bug). Touch first, validate second, by hand,
+    # against the same model FastAPI would have used — same errors, same 422 shape.
     _touch(peer)
     if not hub.allow(f"status:{peer.code}", settings.status_rate_max, settings.status_rate_window):
         raise HTTPException(
@@ -305,11 +317,18 @@ async def presence(body: PresenceBody | None = None, peer: Peer = Depends(requir
                     "retry_after": int(settings.status_rate_window)},
             headers={"Retry-After": str(int(settings.status_rate_window))},
         )
-    fields_set = body.model_fields_set if body is not None else set()
+    try:
+        parsed = PresenceBody.model_validate(body or {})
+    except ValidationError as e:
+        errors = e.errors(include_url=False)
+        for err in errors:
+            err["loc"] = ("body", *err["loc"])
+        raise RequestValidationError(errors) from e
+    fields_set = parsed.model_fields_set
     hub.set_status(
         peer.room, peer.name,
-        state=body.state if body else None,
-        note=body.note if body else None,
+        state=parsed.state,
+        note=parsed.note,
         state_provided="state" in fields_set,
         note_provided="note" in fields_set,
     )
@@ -364,7 +383,10 @@ async def admin_invite(body: InviteBody, request: Request, _: None = Depends(req
 
 @app.post("/admin/revoke")
 async def admin_revoke(body: RevokeBody, _: None = Depends(require_admin)) -> dict:
+    affected = code_store.peers_matching(body.target)
     n = code_store.revoke(body.target)
+    for room, name in affected:
+        hub.clear_status(room, name)
     audit.log("revoke", actor="admin", detail=f"{body.target} ({n})")
     return {"revoked": n}
 

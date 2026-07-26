@@ -83,6 +83,23 @@ def test_revoke_unknown_target_is_zero_not_error(client, admin_headers):
     assert r.json()["revoked"] == 0
 
 
+def test_revoke_clears_status_so_a_reissued_name_starts_clean(client, admin_headers):
+    """A name that's revoked and reissued in the same room must not inherit the
+    previous incarnation's status note (e.g. a stale 'blocked: waiting on DB creds')."""
+    code = client.post("/admin/invite", headers=admin_headers, json={"name": "reincarnate"}).json()["code"]
+    auth = {"Authorization": f"Bearer {code}"}
+    client.post("/presence", headers=auth, json={"state": "blocked", "note": "waiting on DB creds"})
+    assert client.get("/whoami", headers=auth).json()["status"] == "blocked"
+
+    assert client.post("/admin/revoke", headers=admin_headers, json={"target": "reincarnate"}).json()["revoked"] >= 1
+
+    new_code = client.post("/admin/invite", headers=admin_headers, json={"name": "reincarnate"}).json()["code"]
+    new_auth = {"Authorization": f"Bearer {new_code}"}
+    me = client.get("/whoami", headers=new_auth).json()
+    assert me["status"] is None and me["status_note"] is None
+    client.post("/admin/revoke", headers=admin_headers, json={"target": "reincarnate"})
+
+
 # ------------------------------------------------------------------- state
 def test_admin_state_shape(client, admin_headers):
     body = client.get("/admin/state", headers=admin_headers).json()

@@ -153,6 +153,8 @@ Codes are stored in **SQLite** (atomic, no corruption). With `ARGYBARGY_HASH_COD
 | `ARGYBARGY_HOST` / `_PORT` | `127.0.0.1` / `8765` | Bind address (Docker sets host `0.0.0.0`). |
 | `ARGYBARGY_DATA` | `~/.argybargy` | State dir (SQLite DB, admin token, url). |
 | `ARGYBARGY_RATE_MAX` / `_RATE_WINDOW` | `10` / `10` | Per-agent send rate limit. |
+| `ARGYBARGY_STATUS_RATE_MAX` / `_STATUS_RATE_WINDOW` | `6` / `20` | Per-agent `/presence` rate limit (tighter than the send limit above). |
+| `ARGYBARGY_STATUS_NOTE_MAX` | `120` | Max length of a `/presence` status note. |
 | `ARGYBARGY_MAX_MESSAGES_PER_ROOM` | `2000` | Retention cap per room (`0` = unlimited). |
 | `ARGYBARGY_MAX_TEXT` | `8000` | Max message length. |
 | `ARGYBARGY_MAX_WAIT` | `25` | Max long-poll wait (seconds). |
