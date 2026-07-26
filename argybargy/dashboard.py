@@ -431,11 +431,18 @@ DASHBOARD_HTML = r"""<!doctype html>
      Callers are expected to have already excluded offline peers / the
      operator from onlinePeerNames — mirrors the removed to-menu's own filter
      (S.agents.filter(online && room && name !== "operator"), dashboard.py:509-511)
-     verbatim; this function does no presence filtering of its own. */
-  function filterMentionCandidates(query, onlinePeerNames) {
+     verbatim; this function does no presence filtering of its own.
+     committedNames (default []) excludes any name already sitting in the
+     rail as a chip — a peer or "everyone" that's already committed has
+     nothing left to add by being committed again, and letting it reappear
+     is how the same agent ends up chipped twice (see resolveWirePayload's
+     two-or-more-peer-chips escalation to to:"all", and the fact that
+     resolveWirePayload only ever reads chips[0] among everyone-chips). */
+  function filterMentionCandidates(query, onlinePeerNames, committedNames) {
+    var committed = committedNames || [];
     var all = [{ name: "everyone", isEveryone: true }].concat(
       onlinePeerNames.map(function (n) { return { name: n, isEveryone: false }; })
-    );
+    ).filter(function (c) { return committed.indexOf(c.name) === -1; });
     var q = (query || "").toLowerCase();
     if (!q) { return all; }
     return all.filter(function (c) { return c.name.toLowerCase().indexOf(q) === 0; });
@@ -475,6 +482,12 @@ DASHBOARD_HTML = r"""<!doctype html>
     return S.agents.filter(function (a) {
       return a.online && a.room === S.view.room && a.name !== "operator";
     }).map(function (a) { return a.name; });
+  }
+  /* Names already sitting in the rail as committed chips ("everyone"
+     included) — fed to filterMentionCandidates so a name can't be
+     committed a second time. */
+  function committedChipNames() {
+    return S.chips.map(function (c) { return c.name; });
   }
   /* A committed chip in the rail — atomic, not editable, tap-to-cycle its
      reply marker via data-chip-tap. Reuses avatar() for identity consistency
@@ -523,7 +536,7 @@ DASHBOARD_HTML = r"""<!doctype html>
      landing point for both Enter and Tab when the popup is open. */
   function commitHighlightedMentionCandidate() {
     if (!S.mentionQuery) { return; }
-    var candidates = filterMentionCandidates(S.mentionQuery.query, onlinePeerNamesInRoom());
+    var candidates = filterMentionCandidates(S.mentionQuery.query, onlinePeerNamesInRoom(), committedChipNames());
     var picked = candidates[S.mentionHighlight];
     if (picked) { commitMentionCandidate(picked); }
   }
@@ -813,7 +826,7 @@ DASHBOARD_HTML = r"""<!doctype html>
       popup.hidden = !showPopup;
       if (showPopup) {
         popup.textContent = "";
-        var candidates = filterMentionCandidates(S.mentionQuery.query, onlinePeerNamesInRoom());
+        var candidates = filterMentionCandidates(S.mentionQuery.query, onlinePeerNamesInRoom(), committedChipNames());
         candidates.forEach(function (c, i) {
           popup.appendChild(mentionCandidateButton(c, i === S.mentionHighlight));
         });
@@ -1230,7 +1243,7 @@ DASHBOARD_HTML = r"""<!doctype html>
       }
       if (key === "ArrowDown" && S.mentionQuery !== null) {
         ev.preventDefault();
-        var downCandidates = filterMentionCandidates(S.mentionQuery.query, onlinePeerNamesInRoom());
+        var downCandidates = filterMentionCandidates(S.mentionQuery.query, onlinePeerNamesInRoom(), committedChipNames());
         S.mentionHighlight = Math.min(S.mentionHighlight + 1, downCandidates.length - 1);
         renderComposer();
         return;

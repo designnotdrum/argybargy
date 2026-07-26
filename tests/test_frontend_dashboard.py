@@ -252,6 +252,28 @@ def test_filter_mention_candidates_no_peers_still_pins_everyone(dash):
     assert result == [{"name": "everyone", "isEveryone": True}]
 
 
+def test_filter_mention_candidates_excludes_an_already_committed_peer(dash):
+    result = dash.evaluate(
+        "window.__argy.filterMentionCandidates("
+        "'', ['claude-ui','codex-ui','gemini-ui'], ['codex-ui'])"
+    )
+    assert result == [
+        {"name": "everyone", "isEveryone": True},
+        {"name": "claude-ui", "isEveryone": False},
+        {"name": "gemini-ui", "isEveryone": False},
+    ]
+
+
+def test_filter_mention_candidates_excludes_everyone_once_committed(dash):
+    result = dash.evaluate(
+        "window.__argy.filterMentionCandidates('', ['claude-ui','codex-ui'], ['everyone'])"
+    )
+    assert result == [
+        {"name": "claude-ui", "isEveryone": False},
+        {"name": "codex-ui", "isEveryone": False},
+    ]
+
+
 @pytest.mark.parametrize("text,caret,expected", [
     ("@bo", 3, {"start": 0, "query": "bo"}),
     ("hey @bo", 7, {"start": 4, "query": "bo"}),
@@ -400,6 +422,39 @@ def test_committing_a_second_chip_stacks_in_commit_order(dash):
     assert len(chips) == 2
     assert "codex-ui" in chips[0]
     assert "claude-ui" in chips[1]
+
+
+def test_a_peer_already_chipped_does_not_reappear_as_a_mention_candidate(dash):
+    """Review finding: filterMentionCandidates didn't exclude names already in
+    S.chips, so the same peer could be committed a second time — two
+    @codex-ui chips silently escalate the payload from targeted to broadcast
+    (resolveWirePayload's two-or-more-peer-chips rule). Excluding it from the
+    candidate list is what makes that escalation impossible from the popup."""
+    dash.fill("#composerInput", "@cod")
+    dash.click('[data-testid="mention-candidate"]')  # commits codex-ui
+    assert dash.locator('[data-testid="mention-chip"]').count() == 1
+    dash.click("#composerInput")  # commit already refocuses, but be explicit
+    dash.keyboard.type("@")
+    dash.wait_for_selector('[data-testid="mention-popup"]')
+    names = dash.locator('[data-testid="mention-candidate"]').all_inner_texts()
+    assert "codex-ui" not in names
+    assert names == ["everyone", "claude-ui", "gemini-ui", "hermes-ui"]
+
+
+def test_everyone_already_chipped_does_not_reappear_as_a_mention_candidate(dash):
+    """Review finding, second consequence: a second @everyone chip is a real,
+    tappable, functionally dead control — resolveWirePayload only ever reads
+    chips[0] among everyone-chips. Excluding "everyone" once it's committed
+    removes the dead control from the popup entirely."""
+    dash.fill("#composerInput", "@")
+    dash.click('[data-testid="mention-candidate"]')  # "everyone" is pinned first, commits it
+    assert dash.locator('[data-testid="mention-chip"]').count() == 1
+    dash.click("#composerInput")  # commit already refocuses, but be explicit
+    dash.keyboard.type("@")
+    dash.wait_for_selector('[data-testid="mention-popup"]')
+    names = dash.locator('[data-testid="mention-candidate"]').all_inner_texts()
+    assert "everyone" not in names
+    assert names == ["claude-ui", "codex-ui", "gemini-ui", "hermes-ui"]
 
 
 def test_commit_only_plain_at_mentions_with_no_interaction_send_literally_to_all(
