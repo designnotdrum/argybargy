@@ -219,6 +219,12 @@ def test_expects_pill_cycles(dash):
     assert pill.inner_text().endswith("—")
 
 
+def test_invite_action_opens_the_drawer_with_the_room_preselected(dash, seeded):
+    dash.click("#convInviteBtn")
+    dash.wait_for_selector("#adRoot")
+    assert dash.locator("#adRoom").input_value() == seeded["room"]
+
+
 def test_theme_toggle_applies_and_persists(dash, live_server):
     dash.click("#theme-light")
     assert dash.evaluate("document.documentElement.getAttribute('data-theme')") == "light"

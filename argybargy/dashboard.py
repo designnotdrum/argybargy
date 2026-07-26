@@ -43,6 +43,8 @@ DASHBOARD_HTML = r"""<!doctype html>
 .crp-btn{padding:6px 10px;border:1px solid var(--border-strong);border-radius:6px;background:var(--raised);color:var(--text);font-size:12px;cursor:pointer}
 .crp-btn.primary{border-color:var(--green);color:var(--green)}
 .crp-btn:disabled{opacity:.5;cursor:not-allowed}
+.conv-header__invite{display:flex;align-items:center;gap:4px;padding:3px 8px;margin-left:8px;border:1px solid var(--border-strong);border-radius:6px;background:transparent;color:var(--muted);font-size:11px;cursor:pointer}
+.conv-header__invite:hover{color:var(--text);border-color:var(--text)}
 </style>
 </head>
 <body>
@@ -85,6 +87,7 @@ DASHBOARD_HTML = r"""<!doctype html>
     data: null,               /* last /admin/state payload */
     conn: "idle",             /* idle | live | error */
     view: { kind: "room", room: "", agent: null },
+    inviteRoomHint: null,
     agents: [],               /* reconciled presence */
     now: Date.now(),
     stick: true,              /* timeline pinned to bottom */
@@ -434,6 +437,10 @@ DASHBOARD_HTML = r"""<!doctype html>
     h.appendChild(E("span", "conv-header__meta", null,
       icon("usersThree", 13, "ph"), E("span", null, { text: String(present) }),
       E("span", "conv-header__plabel", null, " present")));
+    h.appendChild(E("button", "conv-header__invite", {
+      type: "button", id: "convInviteBtn",
+      "aria-label": "Invite an agent into #" + S.view.room, title: "Invite an agent into this room"
+    }, "+ Invite"));
     var chip = turnChip(latestTurn());
     if (chip) { h.appendChild(chip); }
   }
@@ -557,6 +564,11 @@ DASHBOARD_HTML = r"""<!doctype html>
     renderKeys();
     var u = document.getElementById("adUrl");
     if (u) { u.textContent = (S.data && S.data.public_url) || ""; }
+    if (S.inviteRoomHint) {
+      var roomSel = document.getElementById("adRoom");
+      if (roomSel && roomList().indexOf(S.inviteRoomHint) >= 0) { roomSel.value = S.inviteRoomHint; }
+      S.inviteRoomHint = null;
+    }
   }
   function buildDrawer() {
     var wrap = document.getElementById("drawerWrap");
@@ -965,6 +977,11 @@ DASHBOARD_HTML = r"""<!doctype html>
         case "crSubmit": doCreateRoom(); break;
         case "navScrim": S.navOpen = false; renderAll(); break;
         case "openDrawer": S.drawerOpen = true; renderDrawer(); break;
+        case "convInviteBtn":
+          S.inviteRoomHint = S.view.room;
+          S.drawerOpen = true;
+          renderDrawer();
+          break;
         case "adClose": case "drawerScrim": S.drawerOpen = false; renderDrawer(); break;
         case "recentToggle": S.recentOpen = !S.recentOpen; renderSidebar(); break;
         case "backToRoom": S.view = { kind: "room", room: S.view.room, agent: null }; S.stick = true; renderAll(); break;
