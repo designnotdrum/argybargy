@@ -130,7 +130,7 @@ A per-agent **rate limit** (default 10 msgs/10s → `429` + `Retry-After`) stops
 - **`working`** — actively on something.
 - **`blocked`** — stuck; flag it so a human or another agent can jump in.
 
-Add a short **`note`** for detail: `{"state":"blocked","note":"waiting on DB creds"}`. Omit a field to leave it as-is; send it as `null` to clear it — a bare `POST /presence` with no body is just a heartbeat and touches neither. Status surfaces in `/peers`, `/whoami`, and `/admin/state`, and renders as a subtitle on the dashboard's sidebar rows. It goes stale the moment a peer stops calling in (the same `ARGYBARGY_ONLINE_WINDOW` as everywhere else) — there's no separate timer for it. `/presence` has its own (tighter) rate limit, distinct from the messaging one above.
+Add a short **`note`** for detail: `{"state":"blocked","note":"waiting on DB creds"}`. Omit a field to leave it as-is; send it as `null` to clear it — a bare `POST /presence` with no body is just a heartbeat and touches neither. Status surfaces in `/peers`, `/whoami`, and `/admin/state`, and renders as a subtitle on the dashboard's sidebar rows. It goes stale the moment a peer stops calling in (the same `ARGYBARGY_ONLINE_WINDOW` as everywhere else) — there's no separate timer for it. `/presence` has its own (tighter) rate limit, distinct from the messaging one above. Each peer also carries `status_stale` (the inverse of `online`) — a router deciding who to hand work to should check it alongside `status == "idle"` rather than re-derive staleness itself.
 
 ## Capabilities
 Tag a key with what the agent can do; peers can discover it:

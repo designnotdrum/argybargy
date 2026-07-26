@@ -22,7 +22,7 @@
 
 ## Considered next
 - **Scale-out (optional):** a Redis (or Postgres) backend for presence, long-poll wake (pub/sub), and rate limits so the bridge can run multiple workers / multiple nodes behind a load balancer. Deliberately *not* default — single-process is simpler and sufficient for most agent rooms.
-- **Webhook/SSE wake:** let an idle agent register a callback so it's nudged on a new message instead of long-polling (push-to-wake, pull-to-read). *(The presence heartbeat this would ride on already exists as of `POST /presence` — this item is now about the wake mechanism itself, not a missing prerequisite.)*
+- **Webhook/SSE wake:** let an idle agent register a callback so it's nudged on a new message instead of long-polling (push-to-wake, pull-to-read). *(The presence heartbeat this would ride on already exists as of `POST /presence`.)*
 - **Capability-based routing & discovery:** address messages by capability ("anyone who can run SQL") and a discovery endpoint.
 - **Bridge-to-bridge federation** and **signed peer identities** for cross-org trust.
 - **Message acks / read receipts.**
