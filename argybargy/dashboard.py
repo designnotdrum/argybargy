@@ -98,11 +98,8 @@ DASHBOARD_HTML = r"""<!doctype html>
     recentOpen: false,
     navOpen: false,
     drawerOpen: false,
-    menuOpen: false,
     editingAs: false,
     sendAs: "operator",
-    to: "all",
-    expects: null,
     chips: [],                /* committed @mention chips, rail order = commit order */
     mentionQuery: null,       /* {start, query} when an active @trigger is open, else null */
     mentionHighlight: 0,      /* highlighted index in the mention popup */
@@ -726,18 +723,6 @@ DASHBOARD_HTML = r"""<!doctype html>
       asBtn.textContent = "as ";
       asBtn.appendChild(E("b", null, { text: S.sendAs }));
     }
-    var toBtn = document.getElementById("toPill");
-    if (toBtn) {
-      toBtn.textContent = "→ " + (dm || (S.to === "all" ? "everyone" : S.to));
-      toBtn.disabled = !!dm;
-      toBtn.className = "conv-pill" + (dm ? " conv-pill--locked" : "") +
-        (!dm && S.to !== "all" ? " conv-pill--armed" : "");
-    }
-    var exBtn = document.getElementById("expectsPill");
-    if (exBtn) {
-      exBtn.textContent = "expects · " + (S.expects || "—");
-      exBtn.className = "conv-pill" + (S.expects ? " conv-pill--armed" : "");
-    }
     var send = document.getElementById("sendBtn");
     if (send && input) {
       send.className = "conv-send" + (input.value.trim() ? " conv-send--ready" : "");
@@ -747,34 +732,15 @@ DASHBOARD_HTML = r"""<!doctype html>
       err.hidden = !S.sendError;
       err.textContent = S.sendError || "";
     }
-    var menu = document.getElementById("toMenu");
-    if (menu) {
-      menu.hidden = !(S.menuOpen && !dm);
-      if (S.menuOpen && !dm) {
-        menu.textContent = "";
-        menu.appendChild(E("button", "conv-menu__item", { type: "button", "data-to": "all" },
-          icon("usersThree", 15, "ph"),
-          E("span", "conv-menu__who", null, "everyone"),
-          E("span", "conv-menu__k mono", null, "to: all")));
-        S.agents.filter(function (a) {
-          return a.online && a.room === S.view.room && a.name !== "operator";
-        }).forEach(function (a) {
-          menu.appendChild(E("button", "conv-menu__item", { type: "button", "data-to": a.name },
-            avatar(a.name, "sm", null),
-            E("span", "conv-menu__who", { text: a.name }),
-            E("span", "conv-menu__k mono", { text: "to: " + a.name })));
-        });
-      }
-    }
 
     var rail = document.getElementById("mentionRail");
     if (rail) {
       /* Nick's call: the rail exists only while there's something to show —
          it is absent at rest (0 chips), appears the instant the first chip
          commits, and disappears again once the last one is gone. Toggling
-         `hidden` is the exact idiom this file already uses for #toMenu
-         (dashboard.py:500-502: `menu.hidden = !(...)`), reused here rather
-         than inventing a new conditionally-appended/removed-from-the-DOM
+         `hidden` is the exact idiom this file already uses elsewhere (e.g.
+         `err.hidden = !S.sendError` just above), reused here rather than
+         inventing a new conditionally-appended/removed-from-the-DOM
          pattern. Track whether this actually flips, so the timeline re-pin
          below only runs when the composer's height genuinely changed. */
       var railWasHidden = rail.hidden;
@@ -1075,11 +1041,6 @@ DASHBOARD_HTML = r"""<!doctype html>
     }));
     var row = E("div", "conv-composer__row");
     row.appendChild(E("button", "conv-pill", { type: "button", id: "asPill", title: "Send-as identity — click to edit" }, "as "));
-    var toWrap = E("div", "conv-composer__to-wrap", null,
-      E("button", "conv-pill", { type: "button", id: "toPill", title: "Target — maps to the 'to' field" }, "→ everyone"),
-      E("div", "conv-menu", { id: "toMenu", "data-testid": "to-menu", hidden: true }));
-    row.appendChild(toWrap);
-    row.appendChild(E("button", "conv-pill", { type: "button", id: "expectsPill", "data-testid": "expects-pill", title: "expects_reply — click to cycle" }, "expects · —"));
     row.appendChild(E("button", "conv-send", {
       type: "button", id: "sendBtn", "data-testid": "send-button",
       title: "Send (Enter)", "aria-label": "Send message"
@@ -1111,14 +1072,18 @@ DASHBOARD_HTML = r"""<!doctype html>
   }
   function doSend() {
     var input = document.getElementById("composerInput");
-    var text = (input.value || "").trim();
+    var bodyText = (input.value || "").trim();
+    var text = serializeMessageText(S.chips, bodyText);
     if (!text) { return; }
     var dm = S.view.kind === "dm" ? S.view.agent : null;
+    var resolved = dm ? resolveDmPayload(dm, S.dmReplyMarker) : resolveWirePayload(S.chips);
     api("/admin/say", {
       room: S.view.room, sender: (S.sendAs || "operator").trim() || "operator",
-      to: dm || S.to, text: text, expects_reply: S.expects
+      to: resolved.to, text: text, expects_reply: resolved.expects_reply
     }).then(function () {
-      input.value = ""; S.expects = null; S.sendError = null; S.stick = true;
+      input.value = ""; S.chips = []; S.dmReplyMarker = "default";
+      S.mentionQuery = null; S.mentionHighlight = 0;
+      S.sendError = null; S.stick = true;
       return poll();
     }).catch(function () {
       S.sendError = "Send failed — the relay rejected that message. Try again.";
@@ -1144,12 +1109,6 @@ DASHBOARD_HTML = r"""<!doctype html>
         renderAll(); return;
       }
       if (t.hasAttribute("data-theme-pick")) { applyTheme(t.getAttribute("data-theme-pick")); return; }
-      if (t.hasAttribute("data-to")) {
-        var pick = t.getAttribute("data-to");
-        S.to = pick;
-        if (S.expects && S.expects !== "anyone" && S.expects !== pick) { S.expects = null; }
-        S.menuOpen = false; renderComposer(); return;
-      }
       if (t.hasAttribute("data-mention-pick")) {
         var pickedName = t.getAttribute("data-mention-pick");
         commitMentionCandidate({ name: pickedName, isEveryone: pickedName === "everyone" });
@@ -1181,20 +1140,11 @@ DASHBOARD_HTML = r"""<!doctype html>
         case "adClose": case "drawerScrim": S.drawerOpen = false; renderDrawer(); break;
         case "recentToggle": S.recentOpen = !S.recentOpen; renderSidebar(); break;
         case "backToRoom": S.view = { kind: "room", room: S.view.room, agent: null }; S.stick = true; renderAll(); break;
-        case "toPill": S.menuOpen = !S.menuOpen; renderComposer(); break;
         case "previewStrip": {
           if (S.view.kind !== "dm") { break; }
           S.dmReplyMarker = cycleReplyMarker(S.dmReplyMarker);
           renderComposer();
           break;
-        }
-        case "expectsPill": {
-          var dm = S.view.kind === "dm" ? S.view.agent : null;
-          var target = dm || S.to;
-          var cycle = [null, "anyone"];
-          if (target !== "all") { cycle.push(target); }
-          S.expects = cycle[(cycle.indexOf(S.expects) + 1) % cycle.length];
-          renderComposer(); break;
         }
         case "sendBtn": doSend(); break;
         case "asPill": startEditAs(); break;

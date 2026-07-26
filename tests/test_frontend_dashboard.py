@@ -583,6 +583,109 @@ def test_room_view_preview_strip_is_not_tappable(dash):
     assert strip.inner_text() == before
 
 
+def test_targeted_mention_matches_the_actual_payload_the_bug_regression(
+    dash, client, admin_headers, seeded
+):
+    """The bug this whole redesign fixes: a targeted send used to show
+    'expects · —' while the relay actually resolved an obligated responder.
+    The preview strip and the real stored message must agree, and both must
+    show the target, not '—'/none."""
+    dash.fill("#composerInput", "@cod")
+    dash.press("#composerInput", "Tab")
+    strip = dash.locator('[data-testid="preview-strip"]')
+    assert "codex-ui" in strip.inner_text()
+    assert strip.inner_text().endswith("reply expected: codex-ui")
+    dash.keyboard.type(" ping")
+    dash.keyboard.press("Enter")
+    msgs = client.get("/admin/state", headers=admin_headers).json()["messages"]
+    sent = [m for m in msgs if m["text"] == "@codex-ui ping" and m["room"] == seeded["room"]]
+    assert sent, "message should have reached the relay"
+    assert sent[0]["to"] == "codex-ui"
+    assert sent[0]["expects_reply"] == "codex-ui"
+
+
+def test_two_peer_chips_force_to_all_in_the_actual_payload(
+    dash, client, admin_headers, seeded
+):
+    dash.fill("#composerInput", "@cod")
+    dash.press("#composerInput", "Tab")
+    dash.keyboard.type("@cla")
+    dash.press("#composerInput", "Tab")
+    assert dash.locator('[data-testid="mention-chip"]').count() == 2
+    dash.keyboard.type(" sync up")
+    dash.keyboard.press("Enter")
+    msgs = client.get("/admin/state", headers=admin_headers).json()["messages"]
+    sent = [m for m in msgs if m["text"] == "@codex-ui @claude-ui sync up"
+            and m["room"] == seeded["room"]]
+    assert sent, "message should have reached the relay"
+    assert sent[0]["to"] == "all"
+    assert sent[0]["expects_reply"] == "codex-ui"
+
+
+def test_tapping_a_chip_marker_changes_the_actual_sent_payload(
+    dash, client, admin_headers, seeded
+):
+    dash.fill("#composerInput", "@cod")
+    dash.press("#composerInput", "Tab")
+    chip = dash.locator('[data-testid="mention-chip"]')
+    chip.click()
+    # .conv-chip__marker is styled text-transform:uppercase, so Playwright's
+    # rendered inner_text() comes back as "ANYONE" even though the DOM text
+    # content the app actually sets is lowercase "anyone" — compare
+    # case-insensitively rather than fighting a legitimate CSS rule.
+    assert "anyone" in chip.inner_text().lower()
+    # Clicking the chip moves DOM focus onto the chip button itself —
+    # data-chip-tap deliberately does not refocus #composerInput (see the
+    # top-of-plan Architecture section: this is the one genuine focus-trap
+    # surface in this implementation). Global page.keyboard.type()/press()
+    # send to whatever currently has focus, so without this explicit click
+    # back into the input the keystrokes below would silently land on the
+    # chip button instead.
+    dash.click("#composerInput")
+    dash.keyboard.type("ping")
+    dash.keyboard.press("Enter")
+    msgs = client.get("/admin/state", headers=admin_headers).json()["messages"]
+    # sent[-1], not sent[0]: the earlier bug-regression test in this same
+    # session-scoped room sends the identical text "@codex-ui ping" with a
+    # different (untapped) expects_reply, so the first match by text can be
+    # that older message rather than the one this test just sent. recent()
+    # returns ascending by id, so the last match is the one just sent.
+    sent = [m for m in msgs if m["text"] == "@codex-ui ping" and m["room"] == seeded["room"]]
+    assert sent, "message should have reached the relay"
+    assert sent[-1]["to"] == "codex-ui"
+    assert sent[-1]["expects_reply"] == "anyone"
+
+
+def test_dm_preview_strip_tap_changes_the_actual_sent_payload(
+    dash, client, admin_headers, seeded
+):
+    dash.click('[data-agent="codex-ui"]')
+    dash.locator('[data-testid="preview-strip"]').click()  # default -> anyone
+    dash.fill("#composerInput", "hey")
+    dash.press("#composerInput", "Enter")
+    msgs = client.get("/admin/state", headers=admin_headers).json()["messages"]
+    sent = [m for m in msgs if m["text"] == "hey" and m["to"] == "codex-ui"]
+    assert sent, "message should have reached the relay"
+    assert sent[-1]["expects_reply"] == "anyone"
+
+
+def test_everyone_mention_reply_marker_cycles(dash):
+    """Replaces the removed test_expects_pill_cycles: the room-broadcast
+    reply-expected toggle is now reached via the @everyone chip instead of
+    the deleted #expectsPill, but the same capability (broadcast, is a reply
+    expected from anyone) must stay reachable and correct."""
+    dash.fill("#composerInput", "@")
+    dash.click('[data-testid="mention-candidate"]')  # "everyone" is pinned first
+    chip = dash.locator('[data-testid="mention-chip"]')
+    assert chip.count() == 1
+    strip = dash.locator('[data-testid="preview-strip"]')
+    assert strip.inner_text().endswith("reply expected: none")
+    chip.click()
+    assert strip.inner_text().endswith("reply expected: anyone")
+    chip.click()
+    assert strip.inner_text().endswith("reply expected: none")
+
+
 # ============================================================ rendering
 def test_sidebar_lists_rooms_and_agents(dash, seeded):
     assert dash.locator(f'[data-room="{seeded["room"]}"]').count() == 1
@@ -635,20 +738,12 @@ def test_clicking_an_agent_opens_a_filtered_direct_view(dash):
     assert dash.locator('[data-testid="channel-title"]').inner_text() == "codex-ui"
     assert dash.locator(".conv-header__filterchip").count() == 1
     assert dash.locator("#composerInput").get_attribute("placeholder") == "Message @codex-ui"
-    to_pill = dash.locator("#toPill")
-    assert "codex-ui" in to_pill.inner_text()
-    assert to_pill.is_disabled()
+    # The old locked #toPill is gone (removed with the cutover to @mention
+    # chips) — its replacement is the always-visible wire-preview strip,
+    # which must show the DM's locked target truthfully.
+    assert "codex-ui" in dash.locator('[data-testid="preview-strip"]').inner_text()
     dash.click("#backToRoom")
     assert dash.locator('[data-testid="channel-title"]').inner_text() == "uiroom"
-
-
-def test_expects_pill_cycles(dash):
-    pill = dash.locator("#expectsPill")
-    assert pill.inner_text().endswith("—")
-    pill.click()
-    assert pill.inner_text().endswith("anyone")
-    pill.click()
-    assert pill.inner_text().endswith("—")
 
 
 def test_theme_toggle_applies_and_persists(dash, live_server):
