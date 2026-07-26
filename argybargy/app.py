@@ -337,6 +337,29 @@ async def presence(body: dict | None = None, peer: Peer = Depends(require_peer))
             "status": current["status"], "status_note": current["status_note"]}
 
 
+# `presence()`'s untyped body (see the comment above) means FastAPI can't derive a
+# request-body schema for the route on its own, so /docs and /openapi.json show a bare
+# object instead of PresenceBody's shape. `openapi_extra` on the route decorator can't
+# repair this cleanly: FastAPI already builds a generic `anyOf`-wrapped schema for the
+# untyped param, and merges any `openapi_extra` fragment into it key-by-key
+# (`fastapi.utils.deep_dict_update`) rather than replacing it — the leftover `anyOf`
+# stays behind next to the real schema. Patching the generated document directly, the
+# customization FastAPI's own `openapi()` docstring points to, replaces it outright —
+# derived from the model so the two can't drift apart.
+_default_openapi = app.openapi
+
+
+def _openapi_with_presence_schema() -> dict:
+    schema = _default_openapi()
+    schema["paths"]["/presence"]["post"]["requestBody"] = {
+        "content": {"application/json": {"schema": PresenceBody.model_json_schema()}}
+    }
+    return schema
+
+
+app.openapi = _openapi_with_presence_schema
+
+
 # ----- admin: dashboard + management -----
 
 @app.get("/dashboard", response_class=HTMLResponse)

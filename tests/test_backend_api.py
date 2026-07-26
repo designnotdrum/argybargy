@@ -30,6 +30,24 @@ def test_openapi_and_docs_served_by_default(client):
     assert client.get("/docs").status_code == 200
 
 
+def test_openapi_presence_requestbody_describes_presence_body(client):
+    """POST /presence takes an untyped body (validated by hand, after `_touch()`) so a
+    malformed payload can never eat a peer's heartbeat — see the comment on `presence()`.
+    That untyping means FastAPI can't derive the schema on its own; `app.py` patches the
+    generated document to restore it. Guard the patch: without it, this schema silently
+    reverts to a bare object and /docs stops describing the real shape."""
+    schema = client.get("/openapi.json").json()["paths"]["/presence"]["post"]["requestBody"]
+    schema = schema["content"]["application/json"]["schema"]
+
+    state_variants = schema["properties"]["state"]["anyOf"]
+    state_enum = next(v["enum"] for v in state_variants if "enum" in v)
+    assert set(state_enum) == {"idle", "working", "blocked"}
+
+    note_variants = schema["properties"]["note"]["anyOf"]
+    note_max_length = next(v["maxLength"] for v in note_variants if "maxLength" in v)
+    assert note_max_length == settings.status_note_max
+
+
 # ---------------------------------------------------------------------- auth
 def test_protected_routes_reject_missing_and_bogus_codes(client):
     for path in ("/whoami", "/peers", "/history", "/messages?wait=0"):
