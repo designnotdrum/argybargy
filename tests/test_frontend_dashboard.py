@@ -238,6 +238,15 @@ def test_invite_action_offers_agents_from_other_rooms_not_the_admin_panel(dash, 
     codes = client.get("/admin/state", headers=admin_headers).json()["codes"]
     assert any(c["name"] == "elsewhere-bot" and c["room"] == seeded["room"] for c in codes)
 
+    # The human's next step is the connect instruction, not a bare token.
+    assert "Authorization: Bearer" in dash.locator("#ipInstruction").inner_text()
+
+    # And the agent is visibly in the room straight away, marked as pending.
+    dash.click("#ipClose")
+    row = dash.locator('[data-invited="elsewhere-bot"]')
+    assert row.count() == 1
+    assert "not connected yet" in row.inner_text()
+
 
 def test_invite_picker_excludes_agents_already_in_the_room(dash, seeded):
     dash.click("#convInviteBtn")

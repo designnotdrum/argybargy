@@ -74,6 +74,9 @@ DASHBOARD_HTML = r"""<!doctype html>
 .drd-btn.danger{border-color:var(--red);color:var(--red)}
 .drd-btn:disabled{opacity:.5;cursor:not-allowed}
 .drd-errorbox{margin-top:8px;padding:6px 8px;border:1px solid var(--red-dim);border-radius:6px;background:var(--red-dim);color:var(--red);font-size:11px}
+.sb-arow--invited{opacity:.5}
+.sb-arow--invited .sb-av{filter:grayscale(1)}
+.ip-res__lead{margin-bottom:6px}
 .ip-scrim{position:fixed;inset:0;z-index:45;border:none;background:var(--scrim);cursor:default}
 .ip-wrap{position:fixed;top:52px;right:16px;z-index:46}
 .ip-root{width:min(300px,calc(100vw - 32px));padding:12px;border:1px solid var(--border-strong);border-radius:10px;background:var(--surface);color:var(--text);box-shadow:var(--pop-shadow)}
@@ -457,6 +460,11 @@ DASHBOARD_HTML = r"""<!doctype html>
       E("span", "sb-n", { text: "· " + onlineCount })));
     var al = E("div", null, { "data-testid": "agent-list" });
     visible.forEach(function (a) { al.appendChild(agentRow(a, shown(a), false)); });
+    /* Minted a code but never connected: the agent belongs to the room as far
+       as the relay is concerned, so show it here rather than leaving the
+       invite looking like it did nothing. Dimmed and labelled, because it
+       can't actually be talked to until it redeems the code. */
+    invitedNames().forEach(function (n) { al.appendChild(invitedRow(n)); });
     out.appendChild(al);
 
     if (offline.length) {
@@ -497,6 +505,34 @@ DASHBOARD_HTML = r"""<!doctype html>
     b.appendChild(E("span", "sb-alast mono",
       { "data-testid": "last-seen", text: a.life === "online" ? "online" : lastSeen(seconds) + " ago" }));
     return b;
+  }
+
+  /* Names holding a code somewhere but with no live presence anywhere — i.e.
+     invited and not yet connected. A name that's live in another room is not
+     "invited"; it's just elsewhere, and dedupe already surfaces it. */
+  function invitedNames() {
+    var live = {};
+    var peers = (S.data && S.data.peers) || {};
+    Object.keys(peers).forEach(function (room) {
+      peers[room].forEach(function (p) { live[p.name] = 1; });
+    });
+    var seen = {};
+    var out = [];
+    ((S.data && S.data.codes) || []).forEach(function (c) {
+      if (c.room === S.view.room && !live[c.name] && !seen[c.name]) {
+        seen[c.name] = 1;
+        out.push(c.name);
+      }
+    });
+    return out.sort(function (a, b) { return a.localeCompare(b); });
+  }
+  function invitedRow(name) {
+    var row = E("div", "sb-arow sb-arow--invited", { "data-invited": name });
+    row.appendChild(avatar(name, "row", false));
+    row.appendChild(E("div", "sb-atext", null,
+      E("span", "sb-aname", { text: name }),
+      E("span", "sb-astatus", { text: "invited — not connected yet" })));
+    return row;
   }
 
   function roomRow(r, archived) {
@@ -918,10 +954,16 @@ DASHBOARD_HTML = r"""<!doctype html>
       E("span", null, { text: "Invite into #" + room }),
       E("button", "ip-close", { type: "button", id: "ipClose", "aria-label": "Close invite" }, "×")));
     if (S.invitePicker.result) {
+      /* The relay can't push a credential into an agent that's already running
+         somewhere else, so the one thing a human still has to do is hand this
+         over. Lead with that instruction — a bare token doesn't say what to do
+         next. The agent shows up in the room's roster as "invited" the moment
+         this is minted, so the room membership itself needs no explaining. */
       var res = S.invitePicker.result;
       root.appendChild(E("div", "ad-resultbox", null,
-        E("div", null, { text: res.name + " can join #" + res.room + " with:" }),
-        E("div", "ad-code", { text: res.code })));
+        E("div", "ip-res__lead", { text: res.name + " is in #" + res.room + ". Paste this to it to connect:" }),
+        E("div", "ad-code", { id: "ipInstruction", text: res.instruction || res.code }),
+        E("button", "ip-btn", { type: "button", id: "ipCopy" }, "Copy")));
     } else {
       var candidates = agentsNotInRoom(room);
       if (candidates.length) {
@@ -1315,6 +1357,10 @@ DASHBOARD_HTML = r"""<!doctype html>
         case "ipClose": case "ipScrim":
           S.invitePicker = null;
           renderInvitePicker();
+          break;
+        case "ipCopy":
+          copyText((S.invitePicker && S.invitePicker.result &&
+                    (S.invitePicker.result.instruction || S.invitePicker.result.code)) || "", "ipCopy");
           break;
         case "ipNewSubmit": {
           var newName = (document.getElementById("ipNewName") || {}).value || "";
