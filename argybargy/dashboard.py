@@ -45,6 +45,17 @@ DASHBOARD_HTML = r"""<!doctype html>
 .crp-btn:disabled{opacity:.5;cursor:not-allowed}
 .conv-header__invite{display:flex;align-items:center;gap:4px;padding:3px 8px;margin-left:8px;border:1px solid var(--border-strong);border-radius:6px;background:transparent;color:var(--muted);font-size:11px;cursor:pointer}
 .conv-header__invite:hover{color:var(--text);border-color:var(--text)}
+.sb-roomrow{position:relative;display:flex;align-items:center}
+.sb-roomrow .sb-room{flex:1}
+.sb-room-menuwrap{position:relative}
+.sb-room-dots{display:none;align-items:center;justify-content:center;width:20px;height:20px;padding:0;margin-right:6px;border:none;border-radius:5px;background:transparent;color:var(--faint);cursor:pointer;font-size:13px;line-height:1}
+.sb-roomrow:hover .sb-room-dots{display:flex}
+.sb-room-menu{position:absolute;top:100%;right:6px;z-index:20;min-width:140px;padding:4px;border:1px solid var(--border-strong);border-radius:8px;background:var(--raised);box-shadow:var(--pop-shadow)}
+.sb-room-menuitem{display:block;width:100%;padding:6px 8px;border:none;border-radius:5px;background:transparent;color:var(--text);font-size:12px;text-align:left;cursor:pointer}
+.sb-room-menuitem:hover{background:var(--bg)}
+.sb-room-menuitem--danger{color:var(--red)}
+.sb-room-restore{margin-right:6px;padding:3px 8px;border:1px solid var(--border-strong);border-radius:6px;background:transparent;color:var(--muted);font-size:11px;cursor:pointer}
+.sb-room-restore:hover{color:var(--text);border-color:var(--text)}
 </style>
 </head>
 <body>
@@ -73,6 +84,7 @@ DASHBOARD_HTML = r"""<!doctype html>
 
   var TOKEN_KEY = "cc_admin";
   var THEME_KEY = "cc_theme";
+  var ARCHIVE_KEY = "cc_archived_rooms";
   var POLL_MS = 3000;
   var FADE_MS = 8000;
   var BOTTOM_SLOP_PX = 32;
@@ -92,6 +104,9 @@ DASHBOARD_HTML = r"""<!doctype html>
     now: Date.now(),
     stick: true,              /* timeline pinned to bottom */
     recentOpen: false,
+    archivedRooms: loadArchivedRooms(),
+    archivedOpen: false,
+    roomMenuOpen: null,
     navOpen: false,
     drawerOpen: false,
     menuOpen: false,
@@ -256,6 +271,28 @@ DASHBOARD_HTML = r"""<!doctype html>
     (S.data.codes || []).forEach(function (c) { set[c.room] = 1; });
     return Object.keys(set).sort(function (a, b) { return a.localeCompare(b); });
   }
+  function loadArchivedRooms() {
+    try {
+      var arr = JSON.parse(localStorage.getItem(ARCHIVE_KEY) || "[]");
+      var out = {};
+      arr.forEach(function (r) { out[r] = true; });
+      return out;
+    } catch (e) { return {}; }
+  }
+  function persistArchivedRooms() {
+    localStorage.setItem(ARCHIVE_KEY, JSON.stringify(Object.keys(S.archivedRooms)));
+  }
+  /* Per-browser, never touches the relay — the server has no concept of
+     "archived". New activity never auto-resurfaces an archived room; only
+     restoreRoom() moves it back to the top-level list. */
+  function archiveRoom(room) {
+    S.archivedRooms[room] = true;
+    persistArchivedRooms();
+  }
+  function restoreRoom(room) {
+    delete S.archivedRooms[room];
+    persistArchivedRooms();
+  }
   function messagesFor() {
     if (!S.data) { return []; }
     var all = (S.data.messages || []).filter(function (m) { return m.room === S.view.room; });
@@ -352,14 +389,22 @@ DASHBOARD_HTML = r"""<!doctype html>
     out.appendChild(E("div", "sb-label sb-label-row", null,
       E("span", null, null, "Rooms"),
       E("button", "sb-iconbtn-sm", { type: "button", id: "openCreateRoom", "aria-label": "Create room", title: "Create room" }, "+")));
+    var allRooms = roomList();
+    var visibleRooms = allRooms.filter(function (r) { return !S.archivedRooms[r]; });
+    var archivedRoomsList = allRooms.filter(function (r) { return S.archivedRooms[r]; });
     var rl = E("div", null, { "data-testid": "room-list" });
-    roomList().forEach(function (r) {
-      var active = S.view.kind === "room" && S.view.room === r;
-      rl.appendChild(E("button", active ? "sb-room active" : "sb-room",
-        { type: "button", "data-room": r, "aria-label": "Room " + r, "aria-current": active ? "true" : null },
-        icon("hash", 14, "sb-ph"), E("span", null, { text: r })));
-    });
+    visibleRooms.forEach(function (r) { rl.appendChild(roomRow(r, false)); });
     out.appendChild(rl);
+    if (archivedRoomsList.length) {
+      out.appendChild(E("button", S.archivedOpen ? "sb-recent-head open" : "sb-recent-head",
+        { type: "button", id: "archivedToggle", "aria-expanded": S.archivedOpen ? "true" : "false" },
+        icon("caretRight", 12, "sb-ph"), " Archived · " + archivedRoomsList.length));
+      if (S.archivedOpen) {
+        var al2 = E("div", null, { "data-testid": "archived-room-list" });
+        archivedRoomsList.forEach(function (r) { al2.appendChild(roomRow(r, true)); });
+        out.appendChild(al2);
+      }
+    }
 
     out.appendChild(E("div", "sb-label", null, "Agents ",
       E("span", "sb-n", { text: "· " + onlineCount })));
@@ -405,6 +450,26 @@ DASHBOARD_HTML = r"""<!doctype html>
     b.appendChild(E("span", "sb-alast mono",
       { "data-testid": "last-seen", text: a.life === "online" ? "online" : lastSeen(seconds) + " ago" }));
     return b;
+  }
+
+  function roomRow(r, archived) {
+    var active = S.view.kind === "room" && S.view.room === r;
+    var btn = E("button", active ? "sb-room active" : "sb-room",
+      { type: "button", "data-room": r, "aria-label": "Room " + r, "aria-current": active ? "true" : null },
+      icon("hash", 14, "sb-ph"), E("span", null, { text: r }));
+    if (archived) {
+      return E("div", "sb-roomrow", null, btn,
+        E("button", "sb-room-restore", { type: "button", "data-restore-room": r, "aria-label": "Restore " + r }, "Restore"));
+    }
+    var wrap = E("div", "sb-roomrow", null, btn,
+      E("div", "sb-room-menuwrap", null,
+        E("button", "sb-room-dots", { type: "button", "data-room-menu": r, "aria-label": "Room options for " + r }, "⋯")));
+    if (S.roomMenuOpen === r) {
+      var menu = E("div", "sb-room-menu", { "data-testid": "room-menu-" + r },
+        E("button", "sb-room-menuitem", { type: "button", "data-archive-room": r }, "Archive"));
+      wrap.lastChild.appendChild(menu);
+    }
+    return wrap;
   }
 
   /* ---------------------------------------------------------------- header */
@@ -941,6 +1006,23 @@ DASHBOARD_HTML = r"""<!doctype html>
         S.view = { kind: "dm", room: S.view.room, agent: t.getAttribute("data-agent") };
         S.navOpen = false; S.stick = true; renderAll(); return;
       }
+      if (t.hasAttribute("data-room-menu")) {
+        var menuRoom = t.getAttribute("data-room-menu");
+        S.roomMenuOpen = S.roomMenuOpen === menuRoom ? null : menuRoom;
+        renderSidebar();
+        return;
+      }
+      if (t.hasAttribute("data-archive-room")) {
+        archiveRoom(t.getAttribute("data-archive-room"));
+        S.roomMenuOpen = null;
+        renderSidebar();
+        return;
+      }
+      if (t.hasAttribute("data-restore-room")) {
+        restoreRoom(t.getAttribute("data-restore-room"));
+        renderSidebar();
+        return;
+      }
       if (t.hasAttribute("data-theme-pick")) { applyTheme(t.getAttribute("data-theme-pick")); return; }
       if (t.hasAttribute("data-to")) {
         var pick = t.getAttribute("data-to");
@@ -984,6 +1066,7 @@ DASHBOARD_HTML = r"""<!doctype html>
           break;
         case "adClose": case "drawerScrim": S.drawerOpen = false; renderDrawer(); break;
         case "recentToggle": S.recentOpen = !S.recentOpen; renderSidebar(); break;
+        case "archivedToggle": S.archivedOpen = !S.archivedOpen; renderSidebar(); break;
         case "backToRoom": S.view = { kind: "room", room: S.view.room, agent: null }; S.stick = true; renderAll(); break;
         case "toPill": S.menuOpen = !S.menuOpen; renderComposer(); break;
         case "expectsPill": {

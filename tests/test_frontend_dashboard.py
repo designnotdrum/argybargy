@@ -247,6 +247,31 @@ def test_operator_can_send_a_message_to_the_room(dash, client, admin_headers, se
     assert sent[0]["from"] == "operator"
 
 
+def test_archiving_a_room_moves_it_into_the_archived_disclosure_and_back(dash, client, admin_headers):
+    client.post("/admin/invite", headers=admin_headers, json={"name": "archivee", "room": "archiveroom"})
+    # Wait for the next poll to surface the room rather than sleeping a fixed
+    # interval — under full-suite load a bare 3.5s wait races the 3s poll.
+    dash.wait_for_selector('[data-room="archiveroom"]', timeout=15000)
+
+    # The ⋯ trigger is revealed on row hover, so hover before clicking it —
+    # without this Playwright fails actionability on a display:none element.
+    dash.hover('[data-room="archiveroom"]')
+    dash.click('[data-room-menu="archiveroom"]')
+    dash.click('[data-archive-room="archiveroom"]')
+
+    room_list = dash.locator('[data-testid="room-list"]')
+    assert room_list.locator('[data-room="archiveroom"]').count() == 0
+
+    archived_toggle = dash.locator("#archivedToggle")
+    assert archived_toggle.is_visible()
+    dash.click("#archivedToggle")
+    archived_list = dash.locator('[data-testid="archived-room-list"]')
+    assert archived_list.locator('[data-room="archiveroom"]').count() == 1
+
+    dash.click('[aria-label="Restore archiveroom"]')
+    assert room_list.locator('[data-room="archiveroom"]').count() == 1
+
+
 def test_mobile_viewport_collapses_the_sidebar_into_a_drawer(dash):
     dash.set_viewport_size({"width": 375, "height": 812})
     nav = dash.locator("#navWrap")
