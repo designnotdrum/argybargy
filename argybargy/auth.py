@@ -121,3 +121,9 @@ class CodeStore:
             )
             self._db.commit()
             return cur.rowcount
+
+    def delete_room(self, room: str) -> int:
+        with self._lock:
+            cur = self._db.execute("DELETE FROM codes WHERE room = ?", (room,))
+            self._db.commit()
+            return cur.rowcount

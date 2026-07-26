@@ -113,6 +113,12 @@ class MessageStore:
             return {"won": False, "claimed_by": None, "found": False}
         return {"won": False, "claimed_by": row["claimed_by"], "found": True}
 
+    def delete_room(self, room) -> int:
+        with self._lock:
+            cur = self._db.execute("DELETE FROM messages WHERE room=?", (room,))
+            self._db.commit()
+            return cur.rowcount
+
     def room_count(self) -> int:
         with self._lock:
             return int(self._db.execute("SELECT COUNT(DISTINCT room) AS n FROM messages").fetchone()["n"])

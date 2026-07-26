@@ -162,6 +162,16 @@ def test_store_stats_counts_messages_and_rooms(tmp_path):
     assert stats["rooms"] == 2
 
 
+def test_delete_room_removes_only_that_rooms_messages(tmp_path):
+    store = MessageStore(tmp_path / "delete.db")
+    store.add("victim", "s", "all", "keep me out")
+    store.add("bystander", "s", "all", "unrelated room")
+    deleted = store.delete_room("victim")
+    assert deleted == 1
+    assert store.history("victim", 100) == []
+    assert len(store.history("bystander", 100)) == 1
+
+
 # --------------------------------------------------------------------- auth
 def test_issue_resolve_and_revoke_roundtrip(tmp_path):
     cs = CodeStore(tmp_path / "codes.db")
@@ -220,6 +230,16 @@ def test_capabilities_by_name(tmp_path):
     cs.issue(name="dba", room="r", capabilities="runs SQL")
     assert cs.capabilities_by_name("r").get("dba") == "runs SQL"
     assert cs.capabilities_by_name("other-room") == {}
+
+
+def test_delete_room_removes_only_that_rooms_codes(tmp_path):
+    cs = CodeStore(tmp_path / "delete-codes.db")
+    cs.issue(name="victim", room="doomed")
+    cs.issue(name="bystander", room="safe")
+    deleted = cs.delete_room("doomed")
+    assert deleted == 1
+    assert all(c["room"] != "doomed" for c in cs.list())
+    assert any(c["room"] == "safe" for c in cs.list())
 
 
 # -------------------------------------------------------------------- audit
@@ -286,6 +306,26 @@ def test_touch_reports_first_sighting(tmp_path):
     hub = Hub(MessageStore(tmp_path / "touch.db"))
     assert hub.touch("r", "alice") is True
     assert hub.touch("r", "alice") is False
+
+
+def test_drop_room_wakes_a_pending_long_poll(tmp_path):
+    hub = Hub(MessageStore(tmp_path / "drop.db"))
+
+    async def scenario():
+        async def delayed_drop():
+            await asyncio.sleep(0.2)
+            hub.drop_room("r")
+
+        task = asyncio.create_task(delayed_drop())
+        started = time.monotonic()
+        msgs, _ = await hub.read("r", "listener", since=0, wait=5)
+        elapsed = time.monotonic() - started
+        await task
+        return msgs, elapsed
+
+    msgs, elapsed = run_async(scenario)
+    assert msgs == []
+    assert elapsed < 1.0, "drop_room should wake the waiter well before the 5s deadline"
 
 
 # ---------------------------------------------------------------------- util
