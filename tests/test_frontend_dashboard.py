@@ -4,10 +4,13 @@ Driven by Playwright *from pytest* — one toolchain (uv + pytest), no Node.
 Install the browser once with:  uv run playwright install chromium
 """
 import re
+import time
 
 import pytest
 
+from argybargy import app as appmod
 from argybargy.dashboard import DASHBOARD_HTML
+from argybargy.hub import ONLINE_WINDOW_SECONDS
 
 playwright_api = pytest.importorskip("playwright.sync_api")
 
@@ -196,6 +199,35 @@ def test_empty_room_shows_a_friendly_placeholder(dash, client, admin_headers):
     dash.wait_for_timeout(3500)
     dash.click('[data-room="emptyroom"]')
     assert "Nothing in #emptyroom yet" in dash.locator(".conv-empty").inner_text()
+
+
+def test_status_subtitle_renders_live_for_an_online_agent(dash, client, admin_headers, seeded):
+    code = client.post("/admin/invite", headers=admin_headers,
+                       json={"name": "status-ui", "room": seeded["room"]}).json()["code"]
+    client.post("/presence", headers={"Authorization": f"Bearer {code}"},
+                json={"state": "working", "note": "reviewing PR #2"})
+    dash.wait_for_timeout(3500)
+    row = dash.locator('[data-agent="status-ui"]')
+    assert row.locator(".sb-astatus").inner_text() == "working: reviewing PR #2"
+    client.post("/admin/revoke", headers=admin_headers, json={"target": "status-ui"})
+
+
+def test_status_subtitle_renders_past_tense_once_the_agent_goes_stale(dash, client, admin_headers, seeded):
+    code = client.post("/admin/invite", headers=admin_headers,
+                       json={"name": "stale-status-ui", "room": seeded["room"]}).json()["code"]
+    auth = {"Authorization": f"Bearer {code}"}
+    client.post("/presence", headers=auth, json={"state": "blocked", "note": "waiting on auth"})
+    # Force this peer's presence past ONLINE_WINDOW_SECONDS so the relay marks
+    # it offline (and status_stale) without a real-time sleep — same technique
+    # as Task 2's test_offline_peer_status_renders_stale. `live_server` and
+    # `client` share the same in-memory Hub instance (conftest.py's
+    # docstring), so this mutation is visible to the dashboard's next poll.
+    appmod.hub._last_seen[seeded["room"]]["stale-status-ui"] = time.monotonic() - (ONLINE_WINDOW_SECONDS + 5)
+    dash.wait_for_timeout(3500)
+    dash.click("#recentToggle")
+    row = dash.locator('[data-testid="recent-offline-list"] [data-agent="stale-status-ui"]')
+    assert row.locator(".sb-astatus").inner_text() == "was blocked: waiting on auth"
+    client.post("/admin/revoke", headers=admin_headers, json={"target": "stale-status-ui"})
 
 
 # ============================================================== interaction
