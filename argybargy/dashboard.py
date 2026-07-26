@@ -102,6 +102,29 @@ DASHBOARD_HTML = r"""<!doctype html>
 .conv-noroom__title{margin:0;color:var(--text);font-size:14px;font-weight:600}
 .conv-noroom__body{margin:0 0 8px;color:var(--muted);font-size:12px}
 .conv-noroom__cta{display:flex;align-items:center;gap:6px;padding:7px 14px;border:1px solid var(--border-strong);border-radius:8px;background:var(--raised);color:var(--text);font-size:12px;cursor:pointer;margin:0 auto}
+.conv-composer__mentions-wrap{position:relative}
+.conv-chip-rail{display:flex;flex-wrap:wrap;gap:6px;padding:8px 12px 0}
+.conv-chip-rail[hidden]{display:none}
+.conv-chip{display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 8px 0 4px;font-size:12px;font-weight:500;color:var(--agent, var(--muted));background:color-mix(in srgb, var(--agent, var(--border)) 12%, transparent);border:1px solid color-mix(in srgb, var(--agent, var(--border)) 38%, transparent);border-radius:999px}
+.conv-chip--armed{color:var(--amber);background:var(--amber-dim);border-color:color-mix(in srgb, var(--amber) 42%, transparent)}
+.conv-chip__marker{font-size:9px;text-transform:uppercase;letter-spacing:.06em;opacity:.85}
+.conv-mention-popup{position:absolute;bottom:auto;top:calc(100% + 4px);left:12px;max-height:220px;overflow-y:auto;z-index:20}
+.conv-menu__item--active{background:color-mix(in srgb, var(--text) 8%, transparent)}
+/* avatar() draws a lettered monogram (a bare text node, no <svg>) for any
+   agent with no recognized vendor glyph — see glyphFor()/avatar() and
+   test_unknown_agents_fall_back_to_no_glyph. Because .conv-avatar is
+   display:grid (block-level), that visible text forces a line break in the
+   browser's own innerText for the candidate row, corrupting the plain
+   candidate name text (e.g. "HE\nhermes-ui" instead of "hermes-ui").
+   Branded/person avatars render an <svg> with no text and are unaffected —
+   :not(:has(svg)) targets only the bare-monogram case. visibility:hidden
+   (not display:none) keeps the swatch's box/alignment intact while
+   reliably excluding its content from innerText, per spec. */
+.conv-mention-popup .conv-avatar:not(:has(svg)){visibility:hidden}
+.conv-preview-strip{display:block;width:100%;text-align:left;font-family:var(--mono);color:var(--faint);background:none;border:0;padding:6px 12px 0;font-size:11px;cursor:default}
+.conv-preview-strip--tappable{cursor:pointer}
+.conv-preview-strip--tappable:hover{color:var(--muted)}
+.conv-mention-text{color:var(--agent);font-weight:600}
 </style>
 </head>
 <body>
@@ -157,11 +180,12 @@ DASHBOARD_HTML = r"""<!doctype html>
     deleteRoom: null,
     navOpen: false,
     drawerOpen: false,
-    menuOpen: false,
     editingAs: false,
     sendAs: "operator",
-    to: "all",
-    expects: null,
+    chips: [],                /* committed @mention chips, rail order = commit order */
+    mentionQuery: null,       /* {start, query} when an active @trigger is open, else null */
+    mentionHighlight: 0,      /* highlighted index in the mention popup */
+    dmReplyMarker: "default", /* DM view's 3-state reply marker, tapped via the preview strip */
     sendError: null,
     baseline: { now: Date.now(), key: "" },
     firstSeen: {},            /* "room#seq" -> ms, for the expects timer */
@@ -417,6 +441,243 @@ DASHBOARD_HTML = r"""<!doctype html>
     return null;
   }
 
+  /* --------------------------------------------------------------- mentions */
+  /* Pure @mention data model + wire-mapping logic. No DOM in this section —
+     the composer section below is the only consumer. This is the ONLY code
+     that decides {to, expects_reply} from committed chips; doSend() must
+     never duplicate this logic (design doc: docs/superpowers/specs/
+     2026-07-25-argybargy-attag-composer-design.md, "Mention semantics"). */
+  var chipIdCounter = 0;
+  /* Fresh id for a newly-committed chip. Not persisted — only needs to be
+     unique within one composer's lifetime for marker-tap targeting. */
+  function nextChipId() {
+    chipIdCounter += 1;
+    return "chip-" + chipIdCounter;
+  }
+  /* 3-state cycle used by a DM's own reply marker (there is no chip to
+     attach it to in a DM — see resolveDmPayload) and reused below by
+     cycleChipMarker for peer chips. */
+  function cycleReplyMarker(marker) {
+    var order = ["default", "anyone", "off"];
+    var i = order.indexOf(marker);
+    return order[(i + 1) % order.length];
+  }
+  /* Cycles one chip's reply marker. @everyone alone is a 2-state cycle
+     (default <-> anyone) since a third "off" state would be redundant — the
+     default already resolves to "none". Peer chips are 3-state. */
+  function cycleChipMarker(chip) {
+    if (chip.isEveryone) { return chip.marker === "default" ? "anyone" : "default"; }
+    return cycleReplyMarker(chip.marker);
+  }
+  /* Taps one chip's marker forward and clears every OTHER peer chip back to
+     "default" — only one peer chip holds the reply marker at a time. The
+     @everyone chip's own marker is independent of peer chips and is left
+     alone when a peer chip is tapped. A tap on an id not present is a no-op
+     (returns the chips array with equal contents, unchanged). */
+  function tapChipMarker(chips, chipId) {
+    var tapped = null;
+    for (var i = 0; i < chips.length; i++) {
+      if (chips[i].id === chipId) { tapped = chips[i]; break; }
+    }
+    if (!tapped) { return chips; }
+    var nextMarker = cycleChipMarker(tapped);
+    return chips.map(function (c) {
+      if (c.id === chipId) { return Object.assign({}, c, { marker: nextMarker }); }
+      if (c.isEveryone) { return c; }
+      return Object.assign({}, c, { marker: "default" });
+    });
+  }
+  /* Resolves the {to, expects_reply} payload for a ROOM-view send from the
+     composer's committed chips. Returns expects_reply: null whenever the
+     server's own default formula (argybargy/app.py:341, admin_say) already
+     lands on the right value — doSend() keeps relying on that default rather
+     than reproducing it; only the states the server cannot infer (an
+     explicit multi-chip responder, or an explicit "off") get an explicit
+     string here. Two or more peer chips always force to:"all": to is the
+     delivery filter (argybargy/store.py:75's "recipient=? OR recipient='all'"
+     clause), so routing to only one mentioned peer would silently drop the
+     message for the others. */
+  function resolveWirePayload(chips) {
+    if (chips.length === 0) { return { to: "all", expects_reply: null }; }
+    var everyoneChip = chips.filter(function (c) { return c.isEveryone; })[0] || null;
+    var peerChips = chips.filter(function (c) { return !c.isEveryone; });
+    if (everyoneChip && peerChips.length === 0) {
+      return { to: "all", expects_reply: everyoneChip.marker === "anyone" ? "anyone" : null };
+    }
+    if (!everyoneChip && peerChips.length === 1) {
+      var only = peerChips[0];
+      if (only.marker === "anyone") { return { to: only.name, expects_reply: "anyone" }; }
+      if (only.marker === "off") { return { to: only.name, expects_reply: "none" }; }
+      return { to: only.name, expects_reply: null };
+    }
+    var responder = null;
+    for (var j = 0; j < peerChips.length; j++) {
+      if (peerChips[j].marker !== "default") { responder = peerChips[j]; break; }
+    }
+    if (!responder) { responder = peerChips[0]; }
+    if (responder.marker === "anyone") { return { to: "all", expects_reply: "anyone" }; }
+    if (responder.marker === "off") { return { to: "all", expects_reply: "none" }; }
+    return { to: "all", expects_reply: responder.name };
+  }
+  /* Resolves the {to, expects_reply} payload for a DM send. to is always
+     locked to dmAgent; expects_reply comes from the DM's own 3-state marker,
+     cycled by tapping the wire-preview strip. */
+  function resolveDmPayload(dmAgent, dmReplyMarker) {
+    if (dmReplyMarker === "anyone") { return { to: dmAgent, expects_reply: "anyone" }; }
+    if (dmReplyMarker === "off") { return { to: dmAgent, expects_reply: "none" }; }
+    return { to: dmAgent, expects_reply: null };
+  }
+  /* Mirrors the relay's own default-resolution formula (argybargy/app.py:341)
+     as a pure, display-only computation for the wire-preview strip. Never
+     used to decide what doSend() actually sends — the send path always lets
+     the server apply its own default when no explicit value has been set. */
+  function resolveExpectsForDisplay(to, expectsReply) {
+    var trimmed = (expectsReply || "").trim();
+    return trimmed || (to === "all" ? "none" : to);
+  }
+  /* Display form of "to", matching the removed to-pill's own convention
+     (dm ? dm : (to === "all" ? "everyone" : to)). */
+  function resolveToForDisplay(dmAgent, to) {
+    if (dmAgent) { return dmAgent; }
+    return to === "all" ? "everyone" : to;
+  }
+  /* Candidate list for the @ popup: "everyone" pinned first, then peers in
+     the order onlinePeerNames provides them, filtered by query as a
+     case-insensitive prefix match (empty query returns every candidate).
+     Callers are expected to have already excluded offline peers / the
+     operator from onlinePeerNames — mirrors the removed to-menu's own filter
+     (S.agents.filter(online && room && name !== "operator"), dashboard.py:509-511)
+     verbatim; this function does no presence filtering of its own.
+     committedNames (default []) excludes any name already sitting in the
+     rail as a chip — a peer or "everyone" that's already committed has
+     nothing left to add by being committed again, and letting it reappear
+     is how the same agent ends up chipped twice (see resolveWirePayload's
+     two-or-more-peer-chips escalation to to:"all", and the fact that
+     resolveWirePayload only ever reads chips[0] among everyone-chips). */
+  function filterMentionCandidates(query, onlinePeerNames, committedNames) {
+    var committed = committedNames || [];
+    var all = [{ name: "everyone", isEveryone: true }].concat(
+      onlinePeerNames.map(function (n) { return { name: n, isEveryone: false }; })
+    ).filter(function (c) { return committed.indexOf(c.name) === -1; });
+    var q = (query || "").toLowerCase();
+    if (!q) { return all; }
+    return all.filter(function (c) { return c.name.toLowerCase().indexOf(q) === 0; });
+  }
+  /* Finds an active @query trigger ending exactly at caret within text. @
+     must be at the start of text or preceded by whitespace (so
+     email@domain is never misread as a trigger), and the query (text
+     between @ and the caret) must not itself contain whitespace — a space
+     closes the trigger. Returns null when no trigger is active at the caret. */
+  function findActiveTrigger(text, caret) {
+    var upToCaret = text.slice(0, caret);
+    var at = upToCaret.lastIndexOf("@");
+    if (at === -1) { return null; }
+    var boundary = at === 0 || /\s/.test(upToCaret[at - 1]);
+    if (!boundary) { return null; }
+    var query = upToCaret.slice(at + 1);
+    if (/\s/.test(query)) { return null; }
+    return { start: at, query: query };
+  }
+  /* Serializes committed chips + the typed body into the literal string sent
+     as "text" on the wire. Chips render in a RAIL, not inline in the input
+     (see the composer section's [design call] docblock below), so this
+     prepends each chip as "@name" in commit order ahead of the typed body,
+     rather than splicing at a caret position. This is the only way a
+     non-dashboard client (curl, another agent) can tell who was mentioned,
+     since the wire has no separate mentions field. */
+  function serializeMessageText(chips, bodyText) {
+    var trimmedBody = (bodyText || "").trim();
+    if (chips.length === 0) { return trimmedBody; }
+    var prefix = chips.map(function (c) { return "@" + c.name; }).join(" ");
+    return trimmedBody ? prefix + " " + trimmedBody : prefix;
+  }
+  /* Online peers eligible as mention candidates — the exact filter the
+     removed to-menu used (dashboard.py:509-511 in the pre-rewrite file),
+     reused verbatim so nothing about who's mentionable changes. */
+  function onlinePeerNamesInRoom() {
+    return S.agents.filter(function (a) {
+      return a.online && a.room === S.view.room && a.name !== "operator";
+    }).map(function (a) { return a.name; });
+  }
+  /* Names already sitting in the rail as committed chips ("everyone"
+     included) — fed to filterMentionCandidates so a name can't be
+     committed a second time. */
+  function committedChipNames() {
+    return S.chips.map(function (c) { return c.name; });
+  }
+  /* A committed chip in the rail — atomic, not editable, tap-to-cycle its
+     reply marker via data-chip-tap. Reuses avatar() for identity consistency
+     with the sidebar/timeline/removed to-menu. */
+  function mentionChipButton(c) {
+    var label = c.marker === "anyone" ? "anyone" : (c.marker === "off" ? "no reply" : "");
+    var cls = "conv-chip" + (c.isEveryone ? "" : " hue-" + (hueFor(c.name) % 5)) +
+      (c.marker !== "default" ? " conv-chip--armed" : "");
+    var btn = E("button", cls, {
+      type: "button", "data-chip-tap": c.id, "data-testid": "mention-chip",
+      title: c.isEveryone ? "everyone — tap to toggle reply expected"
+        : ("@" + c.name + " — tap to cycle reply expected")
+    });
+    btn.appendChild(c.isEveryone ? icon("usersThree", 13, "ph") : avatar(c.name, "sm", null));
+    btn.appendChild(E("span", "conv-chip__name", { text: c.isEveryone ? "everyone" : c.name }));
+    if (label) { btn.appendChild(E("span", "conv-chip__marker", { text: label })); }
+    return btn;
+  }
+  /* One row in the @ popup — styled like the removed to-menu's own rows. */
+  function mentionCandidateButton(c, highlighted) {
+    return E("button", "conv-menu__item" + (highlighted ? " conv-menu__item--active" : ""),
+      { type: "button", "data-mention-pick": c.name, "data-testid": "mention-candidate" },
+      c.isEveryone ? icon("usersThree", 15, "ph") : avatar(c.name, "sm", null),
+      E("span", "conv-menu__who", { text: c.name }));
+  }
+  /* Removes the active @query text from #composerInput, commits a new chip,
+     and synchronously refocuses the input (this file's render model is
+     synchronous direct-DOM-mutation — no requestAnimationFrame needed; see
+     the top-of-plan Architecture section). */
+  function commitMentionCandidate(candidate) {
+    var input = document.getElementById("composerInput");
+    if (!input || !S.mentionQuery) { return; }
+    var before = input.value.slice(0, S.mentionQuery.start);
+    var afterStart = S.mentionQuery.start + 1 + S.mentionQuery.query.length;
+    var after = input.value.slice(afterStart);
+    input.value = before + after;
+    S.chips.push({ id: nextChipId(), name: candidate.name, isEveryone: candidate.isEveryone, marker: "default" });
+    S.mentionQuery = null;
+    S.mentionHighlight = 0;
+    renderComposer();
+    input.focus();
+    var caretPos = before.length;
+    input.setSelectionRange(caretPos, caretPos);
+  }
+  /* Commits whichever candidate is currently highlighted — the shared
+     landing point for both Enter and Tab when the popup is open. */
+  function commitHighlightedMentionCandidate() {
+    if (!S.mentionQuery) { return; }
+    var candidates = filterMentionCandidates(S.mentionQuery.query, onlinePeerNamesInRoom(), committedChipNames());
+    var picked = candidates[S.mentionHighlight];
+    if (picked) { commitMentionCandidate(picked); }
+  }
+  /* Backspace on an EMPTY #composerInput with the caret at position 0, with
+     at least one committed chip present, removes the last chip and
+     reinserts a bare "@" — cursor right after it, which reopens the popup
+     via the input listener's own trigger detection with an empty query. A
+     second Backspace on that single "@" character is ordinary browser
+     Backspace behavior (deletes it), and the input listener's trigger
+     detection naturally closes the popup since findActiveTrigger("", 0) is
+     null. This is the rail-design adaptation of the spec's "backspace
+     immediately after a chip decomposes it" — see the top-of-plan
+     Architecture section, point 3. */
+  function decomposeLastChip() {
+    var input = document.getElementById("composerInput");
+    if (!input || !S.chips.length) { return; }
+    S.chips = S.chips.slice(0, -1);
+    input.value = "@" + input.value;
+    S.mentionQuery = { start: 0, query: "" };
+    S.mentionHighlight = 0;
+    renderComposer();
+    input.focus();
+    input.setSelectionRange(1, 1);
+  }
+
   /* --------------------------------------------------------------- sidebar */
   function renderSidebar() {
     var nav = document.getElementById("sbNav");
@@ -617,6 +878,43 @@ DASHBOARD_HTML = r"""<!doctype html>
   }
 
   /* -------------------------------------------------------------- timeline */
+  /* Lookup of every agent name S has ever seen, for cosmetic @name
+     highlighting in already-sent message text below. Purely decorative —
+     this never decides what gets SENT (that is Task 1's commit-only
+     mapping layer's job alone); it only re-styles already-delivered text. */
+  function seenAgentNamesSet() {
+    var set = {};
+    S.agents.forEach(function (a) { set[a.name] = true; });
+    return set;
+  }
+  /* Appends text to row as a mix of plain text nodes and highlighted
+     @name spans, via createTextNode/E()'s textContent path — never parses
+     text as markup, matching this file's DOM-only text-insertion posture
+     (verified: zero unsafe-markup-write sites anywhere). A @token
+     only gets highlighted if it matches a currently-known agent name;
+     everything else (including a stray "@" or an unknown "@word") renders
+     as plain text exactly as it does today. */
+  function appendMessageText(row, text) {
+    var known = seenAgentNamesSet();
+    var re = /@([A-Za-z0-9_-]+)/g;
+    var lastIndex = 0;
+    var m;
+    while ((m = re.exec(text)) !== null) {
+      if (m.index > lastIndex) {
+        row.appendChild(document.createTextNode(text.slice(lastIndex, m.index)));
+      }
+      var name = m[1];
+      if (known[name]) {
+        row.appendChild(E("span", "conv-mention-text hue-" + (hueFor(name) % 5), { text: "@" + name }));
+      } else {
+        row.appendChild(document.createTextNode(m[0]));
+      }
+      lastIndex = re.lastIndex;
+    }
+    if (lastIndex < text.length) {
+      row.appendChild(document.createTextNode(text.slice(lastIndex)));
+    }
+  }
   function renderTimeline() {
     var tl = document.getElementById("timeline");
     if (!tl) { return; }
@@ -659,7 +957,7 @@ DASHBOARD_HTML = r"""<!doctype html>
         if (m.to && m.to !== "all" && m.to !== hide) {
           row.appendChild(E("span", "conv-dir hue-" + (hueFor(m.to) % 5), { text: "→ " + m.to }));
         }
-        row.appendChild(document.createTextNode(m.text));
+        appendMessageText(row, m.text);
         if (m.claimed_by) { row.appendChild(claimedBadge(m.claimed_by)); }
         else if (m.expects_reply && m.expects_reply !== "none") { row.appendChild(expectsBadge(m)); }
         body.appendChild(row);
@@ -681,18 +979,6 @@ DASHBOARD_HTML = r"""<!doctype html>
       asBtn.textContent = "as ";
       asBtn.appendChild(E("b", null, { text: S.sendAs }));
     }
-    var toBtn = document.getElementById("toPill");
-    if (toBtn) {
-      toBtn.textContent = "→ " + (dm || (S.to === "all" ? "everyone" : S.to));
-      toBtn.disabled = !!dm;
-      toBtn.className = "conv-pill" + (dm ? " conv-pill--locked" : "") +
-        (!dm && S.to !== "all" ? " conv-pill--armed" : "");
-    }
-    var exBtn = document.getElementById("expectsPill");
-    if (exBtn) {
-      exBtn.textContent = "expects · " + (S.expects || "—");
-      exBtn.className = "conv-pill" + (S.expects ? " conv-pill--armed" : "");
-    }
     var send = document.getElementById("sendBtn");
     if (send && input) {
       send.className = "conv-send" + (input.value.trim() ? " conv-send--ready" : "");
@@ -702,24 +988,64 @@ DASHBOARD_HTML = r"""<!doctype html>
       err.hidden = !S.sendError;
       err.textContent = S.sendError || "";
     }
-    var menu = document.getElementById("toMenu");
-    if (menu) {
-      menu.hidden = !(S.menuOpen && !dm);
-      if (S.menuOpen && !dm) {
-        menu.textContent = "";
-        menu.appendChild(E("button", "conv-menu__item", { type: "button", "data-to": "all" },
-          icon("usersThree", 15, "ph"),
-          E("span", "conv-menu__who", null, "everyone"),
-          E("span", "conv-menu__k mono", null, "to: all")));
-        S.agents.filter(function (a) {
-          return a.online && a.room === S.view.room && a.name !== "operator";
-        }).forEach(function (a) {
-          menu.appendChild(E("button", "conv-menu__item", { type: "button", "data-to": a.name },
-            avatar(a.name, "sm", null),
-            E("span", "conv-menu__who", { text: a.name }),
-            E("span", "conv-menu__k mono", { text: "to: " + a.name })));
+
+    var rail = document.getElementById("mentionRail");
+    if (rail) {
+      /* Nick's call: the rail exists only while there's something to show —
+         it is absent at rest (0 chips), appears the instant the first chip
+         commits, and disappears again once the last one is gone. Toggling
+         `hidden` is the exact idiom this file already uses elsewhere (e.g.
+         `err.hidden = !S.sendError` just above), reused here rather than
+         inventing a new conditionally-appended/removed-from-the-DOM
+         pattern. Track whether this actually flips, so the timeline re-pin
+         below only runs when the composer's height genuinely changed. */
+      var railWasHidden = rail.hidden;
+      var railShouldShow = S.chips.length > 0;
+      rail.hidden = !railShouldShow;
+      /* Clear unconditionally, not just when showing — otherwise the last
+         chip's button lingers as a hidden-but-still-present DOM node after
+         the rail empties out, which is stale state even though `hidden`
+         keeps it off-screen (see the CSS specificity note above: absence
+         means gone from the DOM, not just invisible). */
+      rail.textContent = "";
+      if (railShouldShow) {
+        S.chips.forEach(function (c) { rail.appendChild(mentionChipButton(c)); });
+      }
+      if (railWasHidden !== rail.hidden) {
+        /* Adding/removing this row changes the composer's height, which
+           moves #timeline's bottom edge. renderTimeline() itself only
+           re-pins to the bottom when S.stick is true (dashboard.py:465);
+           match that exact condition here so a chip commit/removal doesn't
+           visibly shove the conversation for an operator who wasn't
+           scrolled to the bottom, and doesn't fight one who was scrolled up
+           reading history. Reading scrollHeight after the hidden toggle
+           forces the browser to lay out synchronously first, so this sees
+           the NEW composer height, not the pre-toggle one. */
+        var tl = document.getElementById("timeline");
+        if (tl && S.stick) { tl.scrollTop = tl.scrollHeight; }
+      }
+    }
+    var popup = document.getElementById("mentionPopup");
+    if (popup) {
+      var showPopup = S.view.kind !== "dm" && S.mentionQuery !== null;
+      popup.hidden = !showPopup;
+      if (showPopup) {
+        popup.textContent = "";
+        var candidates = filterMentionCandidates(S.mentionQuery.query, onlinePeerNamesInRoom(), committedChipNames());
+        candidates.forEach(function (c, i) {
+          popup.appendChild(mentionCandidateButton(c, i === S.mentionHighlight));
         });
       }
+    }
+    var strip = document.getElementById("previewStrip");
+    if (strip) {
+      var resolved = dm ? resolveDmPayload(dm, S.dmReplyMarker) : resolveWirePayload(S.chips);
+      var toLabel = resolveToForDisplay(dm, resolved.to);
+      var expectsLabel = resolveExpectsForDisplay(resolved.to, resolved.expects_reply);
+      strip.textContent = "";
+      strip.className = "conv-preview-strip" + (dm ? " conv-preview-strip--tappable" : "");
+      strip.title = dm ? "Tap to cycle reply expected" : "Preview only — set via @mentions";
+      strip.appendChild(document.createTextNode("→ " + toLabel + " · reply expected: " + expectsLabel));
     }
   }
 
@@ -1232,13 +1558,16 @@ DASHBOARD_HTML = r"""<!doctype html>
     framebox.appendChild(E("input", "conv-composer__input", {
       id: "composerInput", autocomplete: "off", spellcheck: "false", placeholder: "Message"
     }));
+    var mentionWrap = E("div", "conv-composer__mentions-wrap");
+    mentionWrap.appendChild(E("div", "conv-chip-rail", { id: "mentionRail", "data-testid": "mention-rail", hidden: true }));
+    mentionWrap.appendChild(E("div", "conv-menu conv-mention-popup", { id: "mentionPopup", "data-testid": "mention-popup", hidden: true }));
+    framebox.appendChild(mentionWrap);
+    framebox.appendChild(E("button", "conv-preview-strip", {
+      type: "button", id: "previewStrip", "data-testid": "preview-strip",
+      title: "Preview only — set via @mentions"
+    }));
     var row = E("div", "conv-composer__row");
     row.appendChild(E("button", "conv-pill", { type: "button", id: "asPill", title: "Send-as identity — click to edit" }, "as "));
-    var toWrap = E("div", "conv-composer__to-wrap", null,
-      E("button", "conv-pill", { type: "button", id: "toPill", title: "Target — maps to the 'to' field" }, "→ everyone"),
-      E("div", "conv-menu", { id: "toMenu", "data-testid": "to-menu", hidden: true }));
-    row.appendChild(toWrap);
-    row.appendChild(E("button", "conv-pill", { type: "button", id: "expectsPill", "data-testid": "expects-pill", title: "expects_reply — click to cycle" }, "expects · —"));
     row.appendChild(E("button", "conv-send", {
       type: "button", id: "sendBtn", "data-testid": "send-button",
       title: "Send (Enter)", "aria-label": "Send message"
@@ -1283,14 +1612,18 @@ DASHBOARD_HTML = r"""<!doctype html>
   }
   function doSend() {
     var input = document.getElementById("composerInput");
-    var text = (input.value || "").trim();
+    var bodyText = (input.value || "").trim();
+    var text = serializeMessageText(S.chips, bodyText);
     if (!text) { return; }
     var dm = S.view.kind === "dm" ? S.view.agent : null;
+    var resolved = dm ? resolveDmPayload(dm, S.dmReplyMarker) : resolveWirePayload(S.chips);
     api("/admin/say", {
       room: S.view.room, sender: (S.sendAs || "operator").trim() || "operator",
-      to: dm || S.to, text: text, expects_reply: S.expects
+      to: resolved.to, text: text, expects_reply: resolved.expects_reply
     }).then(function () {
-      input.value = ""; S.expects = null; S.sendError = null; S.stick = true;
+      input.value = ""; S.chips = []; S.dmReplyMarker = "default";
+      S.mentionQuery = null; S.mentionHighlight = 0;
+      S.sendError = null; S.stick = true;
       return poll();
     }).catch(function () {
       S.sendError = "Send failed — the relay rejected that message. Try again.";
@@ -1313,11 +1646,15 @@ DASHBOARD_HTML = r"""<!doctype html>
 
       if (t.hasAttribute("data-room")) {
         S.view = { kind: "room", room: t.getAttribute("data-room"), agent: null };
-        S.navOpen = false; S.stick = true; renderAll(); return;
+        S.navOpen = false; S.stick = true;
+        S.chips = []; S.mentionQuery = null; S.mentionHighlight = 0; S.dmReplyMarker = "default";
+        renderAll(); return;
       }
       if (t.hasAttribute("data-agent")) {
         S.view = { kind: "dm", room: S.view.room, agent: t.getAttribute("data-agent") };
-        S.navOpen = false; S.stick = true; renderAll(); return;
+        S.navOpen = false; S.stick = true;
+        S.chips = []; S.mentionQuery = null; S.mentionHighlight = 0; S.dmReplyMarker = "default";
+        renderAll(); return;
       }
       if (t.hasAttribute("data-room-menu")) {
         var menuRoom = t.getAttribute("data-room-menu");
@@ -1355,11 +1692,16 @@ DASHBOARD_HTML = r"""<!doctype html>
         return;
       }
       if (t.hasAttribute("data-theme-pick")) { applyTheme(t.getAttribute("data-theme-pick")); return; }
-      if (t.hasAttribute("data-to")) {
-        var pick = t.getAttribute("data-to");
-        S.to = pick;
-        if (S.expects && S.expects !== "anyone" && S.expects !== pick) { S.expects = null; }
-        S.menuOpen = false; renderComposer(); return;
+      if (t.hasAttribute("data-mention-pick")) {
+        var pickedName = t.getAttribute("data-mention-pick");
+        commitMentionCandidate({ name: pickedName, isEveryone: pickedName === "everyone" });
+        return;
+      }
+      if (t.hasAttribute("data-chip-tap")) {
+        var chipId = t.getAttribute("data-chip-tap");
+        S.chips = tapChipMarker(S.chips, chipId);
+        renderComposer();
+        return;
       }
       if (t.hasAttribute("data-copykey")) { copyText(t.getAttribute("data-copykey"), "k" + t.getAttribute("aria-label")); return; }
       if (t.hasAttribute("data-revoke")) {
@@ -1422,14 +1764,11 @@ DASHBOARD_HTML = r"""<!doctype html>
         case "recentToggle": S.recentOpen = !S.recentOpen; renderSidebar(); break;
         case "archivedToggle": S.archivedOpen = !S.archivedOpen; renderSidebar(); break;
         case "backToRoom": S.view = { kind: "room", room: S.view.room, agent: null }; S.stick = true; renderAll(); break;
-        case "toPill": S.menuOpen = !S.menuOpen; renderComposer(); break;
-        case "expectsPill": {
-          var dm = S.view.kind === "dm" ? S.view.agent : null;
-          var target = dm || S.to;
-          var cycle = [null, "anyone"];
-          if (target !== "all") { cycle.push(target); }
-          S.expects = cycle[(cycle.indexOf(S.expects) + 1) % cycle.length];
-          renderComposer(); break;
+        case "previewStrip": {
+          if (S.view.kind !== "dm") { break; }
+          S.dmReplyMarker = cycleReplyMarker(S.dmReplyMarker);
+          renderComposer();
+          break;
         }
         case "sendBtn": doSend(); break;
         case "asPill": startEditAs(); break;
@@ -1445,7 +1784,16 @@ DASHBOARD_HTML = r"""<!doctype html>
     });
 
     document.addEventListener("input", function (ev) {
-      if (ev.target.id === "composerInput") { renderComposer(); }
+      if (ev.target.id === "composerInput") {
+        var input = ev.target;
+        /* The @ typeahead does not activate in a DM — the target is already
+           locked to dmAgent, so a picker implying otherwise would reintroduce
+           a version of the lie this redesign is fixing (design spec, "DM
+           view"). */
+        S.mentionQuery = S.view.kind === "dm" ? null : findActiveTrigger(input.value, input.selectionStart);
+        S.mentionHighlight = 0;
+        renderComposer();
+      }
       if (ev.target.id === "crRoom" || ev.target.id === "crName") { refreshCreateRoomHint(); }
       if (ev.target.id === "drdConfirmInput" && S.deleteRoom) {
         S.deleteRoom.typed = ev.target.value;
@@ -1453,7 +1801,46 @@ DASHBOARD_HTML = r"""<!doctype html>
       }
     });
     document.addEventListener("keydown", function (ev) {
-      if (ev.target.id === "composerInput" && ev.key === "Enter") { ev.preventDefault(); doSend(); }
+      if (ev.target.id !== "composerInput") { return; }
+      var key = ev.key;
+      if (key === "Enter") {
+        ev.preventDefault();
+        if (S.mentionQuery !== null) { commitHighlightedMentionCandidate(); return; }
+        doSend();
+        return;
+      }
+      if (key === "Tab" && S.mentionQuery !== null) {
+        ev.preventDefault();
+        commitHighlightedMentionCandidate();
+        return;
+      }
+      if (key === "Escape" && S.mentionQuery !== null) {
+        ev.preventDefault();
+        S.mentionQuery = null;
+        renderComposer();
+        return;
+      }
+      if (key === "ArrowDown" && S.mentionQuery !== null) {
+        ev.preventDefault();
+        var downCandidates = filterMentionCandidates(S.mentionQuery.query, onlinePeerNamesInRoom(), committedChipNames());
+        S.mentionHighlight = Math.min(S.mentionHighlight + 1, downCandidates.length - 1);
+        renderComposer();
+        return;
+      }
+      if (key === "ArrowUp" && S.mentionQuery !== null) {
+        ev.preventDefault();
+        S.mentionHighlight = Math.max(S.mentionHighlight - 1, 0);
+        renderComposer();
+        return;
+      }
+      if (key === "Backspace") {
+        var input = ev.target;
+        if (input.selectionStart === 0 && input.selectionEnd === 0 &&
+            S.chips.length > 0 && S.mentionQuery === null) {
+          ev.preventDefault();
+          decomposeLastChip();
+        }
+      }
     });
     document.addEventListener("scroll", function (ev) {
       var el = ev.target;
@@ -1554,7 +1941,14 @@ DASHBOARD_HTML = r"""<!doctype html>
   window.__argy = {
     hueFor: hueFor, glyphFor: glyphFor, brandAccent: brandAccent,
     lastSeen: lastSeen, elapsedSince: elapsedSince, dedupe: dedupe,
-    isValidRoomName: isValidRoomName
+    isValidRoomName: isValidRoomName,
+    nextChipId: nextChipId, cycleReplyMarker: cycleReplyMarker,
+    cycleChipMarker: cycleChipMarker, tapChipMarker: tapChipMarker,
+    resolveWirePayload: resolveWirePayload, resolveDmPayload: resolveDmPayload,
+    resolveExpectsForDisplay: resolveExpectsForDisplay,
+    resolveToForDisplay: resolveToForDisplay,
+    filterMentionCandidates: filterMentionCandidates,
+    findActiveTrigger: findActiveTrigger, serializeMessageText: serializeMessageText
   };
 
   /* Test seam — lets the Playwright suite simulate arbitrary /admin/state

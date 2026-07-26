@@ -3,6 +3,7 @@
 Driven by Playwright *from pytest* — one toolchain (uv + pytest), no Node.
 Install the browser once with:  uv run playwright install chromium
 """
+import json
 import re
 import time
 
@@ -162,6 +163,613 @@ def test_room_name_validation(dash, name, expected):
     assert dash.evaluate(f"window.__argy.isValidRoomName({name!r})") is expected
 
 
+# ==================================================== mention pure logic
+# Ported from the design spec's mapping table. dash.evaluate() against
+# window.__argy is this repo's only unit-test mechanism (see the JS units
+# section above) — there is no separate JS test runner to run these in.
+
+def test_resolve_wire_payload_zero_chips_broadcasts(dash):
+    assert dash.evaluate("window.__argy.resolveWirePayload([])") == {
+        "to": "all", "expects_reply": None,
+    }
+
+
+@pytest.mark.parametrize("chips,expected", [
+    ([{"id": "b", "name": "bob", "isEveryone": False, "marker": "default"}],
+     {"to": "bob", "expects_reply": None}),
+    ([{"id": "b", "name": "bob", "isEveryone": False, "marker": "anyone"}],
+     {"to": "bob", "expects_reply": "anyone"}),
+    ([{"id": "b", "name": "bob", "isEveryone": False, "marker": "off"}],
+     {"to": "bob", "expects_reply": "none"}),
+    ([{"id": "e", "name": "everyone", "isEveryone": True, "marker": "default"}],
+     {"to": "all", "expects_reply": None}),
+    ([{"id": "e", "name": "everyone", "isEveryone": True, "marker": "anyone"}],
+     {"to": "all", "expects_reply": "anyone"}),
+    ([{"id": "b", "name": "bob", "isEveryone": False, "marker": "default"},
+      {"id": "a", "name": "alice", "isEveryone": False, "marker": "default"}],
+     {"to": "all", "expects_reply": "bob"}),
+    ([{"id": "b", "name": "bob", "isEveryone": False, "marker": "default"},
+      {"id": "a", "name": "alice", "isEveryone": False, "marker": "anyone"}],
+     {"to": "all", "expects_reply": "anyone"}),
+    ([{"id": "b", "name": "bob", "isEveryone": False, "marker": "default"},
+      {"id": "a", "name": "alice", "isEveryone": False, "marker": "off"}],
+     {"to": "all", "expects_reply": "none"}),
+    ([{"id": "e", "name": "everyone", "isEveryone": True, "marker": "default"},
+      {"id": "b", "name": "bob", "isEveryone": False, "marker": "default"}],
+     {"to": "all", "expects_reply": "bob"}),
+], ids=[
+    "one-peer-default", "one-peer-anyone", "one-peer-off",
+    "everyone-alone-default", "everyone-alone-tapped",
+    "two-peers-default-first-responds", "two-peers-marker-on-second",
+    "two-peers-second-off", "everyone-plus-peer",
+])
+def test_resolve_wire_payload_matrix(dash, chips, expected):
+    result = dash.evaluate(f"window.__argy.resolveWirePayload({json.dumps(chips)})")
+    assert result == expected
+
+
+@pytest.mark.parametrize("marker,expected", [
+    ("default", {"to": "bob", "expects_reply": None}),
+    ("anyone", {"to": "bob", "expects_reply": "anyone"}),
+    ("off", {"to": "bob", "expects_reply": "none"}),
+])
+def test_resolve_dm_payload(dash, marker, expected):
+    result = dash.evaluate(f"window.__argy.resolveDmPayload('bob', {marker!r})")
+    assert result == expected
+
+
+@pytest.mark.parametrize("to,expects_reply,expected", [
+    ("all", None, "none"),   # regression test for the bug this spec fixes
+    ("bob", None, "bob"),
+    ("all", "anyone", "anyone"),
+    ("bob", "none", "none"),
+])
+def test_resolve_expects_for_display(dash, to, expects_reply, expected):
+    arg = "null" if expects_reply is None else repr(expects_reply)
+    result = dash.evaluate(f"window.__argy.resolveExpectsForDisplay({to!r}, {arg})")
+    assert result == expected
+
+
+@pytest.mark.parametrize("dm_agent,to,expected", [
+    ("bob", "all", "bob"),
+    (None, "all", "everyone"),
+    (None, "bob", "bob"),
+])
+def test_resolve_to_for_display(dash, dm_agent, to, expected):
+    arg = "null" if dm_agent is None else repr(dm_agent)
+    result = dash.evaluate(f"window.__argy.resolveToForDisplay({arg}, {to!r})")
+    assert result == expected
+
+
+def test_filter_mention_candidates_empty_query_pins_everyone_first(dash):
+    result = dash.evaluate(
+        "window.__argy.filterMentionCandidates('', ['claude-ui','codex-ui','gemini-ui'])"
+    )
+    assert result == [
+        {"name": "everyone", "isEveryone": True},
+        {"name": "claude-ui", "isEveryone": False},
+        {"name": "codex-ui", "isEveryone": False},
+        {"name": "gemini-ui", "isEveryone": False},
+    ]
+
+
+def test_filter_mention_candidates_prefix_match(dash):
+    result = dash.evaluate(
+        "window.__argy.filterMentionCandidates('cod', ['claude-ui','codex-ui','gemini-ui'])"
+    )
+    assert result == [{"name": "codex-ui", "isEveryone": False}]
+
+
+def test_filter_mention_candidates_eve_matches_only_everyone(dash):
+    result = dash.evaluate(
+        "window.__argy.filterMentionCandidates('eve', ['claude-ui','codex-ui'])"
+    )
+    assert result == [{"name": "everyone", "isEveryone": True}]
+
+
+def test_filter_mention_candidates_no_peers_still_pins_everyone(dash):
+    result = dash.evaluate("window.__argy.filterMentionCandidates('', [])")
+    assert result == [{"name": "everyone", "isEveryone": True}]
+
+
+def test_filter_mention_candidates_excludes_an_already_committed_peer(dash):
+    result = dash.evaluate(
+        "window.__argy.filterMentionCandidates("
+        "'', ['claude-ui','codex-ui','gemini-ui'], ['codex-ui'])"
+    )
+    assert result == [
+        {"name": "everyone", "isEveryone": True},
+        {"name": "claude-ui", "isEveryone": False},
+        {"name": "gemini-ui", "isEveryone": False},
+    ]
+
+
+def test_filter_mention_candidates_excludes_everyone_once_committed(dash):
+    result = dash.evaluate(
+        "window.__argy.filterMentionCandidates('', ['claude-ui','codex-ui'], ['everyone'])"
+    )
+    assert result == [
+        {"name": "claude-ui", "isEveryone": False},
+        {"name": "codex-ui", "isEveryone": False},
+    ]
+
+
+@pytest.mark.parametrize("text,caret,expected", [
+    ("@bo", 3, {"start": 0, "query": "bo"}),
+    ("hey @bo", 7, {"start": 4, "query": "bo"}),
+    ("email@domain", 12, None),
+    ("hey @bob following up", 10, None),
+    ("just plain text", 6, None),
+    ("@bob", 0, None),
+], ids=[
+    "at-start", "at-after-whitespace", "not-a-word-boundary",
+    "space-closes-trigger", "no-at-at-all", "caret-before-at",
+])
+def test_find_active_trigger(dash, text, caret, expected):
+    result = dash.evaluate(f"window.__argy.findActiveTrigger({text!r}, {caret})")
+    assert result == expected
+
+
+def test_cycle_reply_marker_three_state(dash):
+    assert dash.evaluate("window.__argy.cycleReplyMarker('default')") == "anyone"
+    assert dash.evaluate("window.__argy.cycleReplyMarker('anyone')") == "off"
+    assert dash.evaluate("window.__argy.cycleReplyMarker('off')") == "default"
+
+
+def test_cycle_chip_marker_peer_is_three_state(dash):
+    chip = {"id": "b", "name": "bob", "isEveryone": False, "marker": "default"}
+    assert dash.evaluate(f"window.__argy.cycleChipMarker({json.dumps(chip)})") == "anyone"
+    chip["marker"] = "anyone"
+    assert dash.evaluate(f"window.__argy.cycleChipMarker({json.dumps(chip)})") == "off"
+    chip["marker"] = "off"
+    assert dash.evaluate(f"window.__argy.cycleChipMarker({json.dumps(chip)})") == "default"
+
+
+def test_cycle_chip_marker_everyone_is_two_state(dash):
+    chip = {"id": "e", "name": "everyone", "isEveryone": True, "marker": "default"}
+    assert dash.evaluate(f"window.__argy.cycleChipMarker({json.dumps(chip)})") == "anyone"
+    chip["marker"] = "anyone"
+    assert dash.evaluate(f"window.__argy.cycleChipMarker({json.dumps(chip)})") == "default"
+
+
+def test_tap_chip_marker_moves_marker_and_clears_other_peer_chips(dash):
+    chips = [
+        {"id": "b", "name": "bob", "isEveryone": False, "marker": "anyone"},
+        {"id": "a", "name": "alice", "isEveryone": False, "marker": "default"},
+    ]
+    result = dash.evaluate(f"window.__argy.tapChipMarker({json.dumps(chips)}, 'a')")
+    by_id = {c["id"]: c for c in result}
+    assert by_id["a"]["marker"] == "anyone"
+    assert by_id["b"]["marker"] == "default"
+
+
+def test_tap_chip_marker_leaves_everyone_chip_untouched(dash):
+    chips = [
+        {"id": "e", "name": "everyone", "isEveryone": True, "marker": "anyone"},
+        {"id": "b", "name": "bob", "isEveryone": False, "marker": "default"},
+    ]
+    result = dash.evaluate(f"window.__argy.tapChipMarker({json.dumps(chips)}, 'b')")
+    by_id = {c["id"]: c for c in result}
+    assert by_id["e"]["marker"] == "anyone"
+    assert by_id["b"]["marker"] == "anyone"
+
+
+def test_tap_chip_marker_unknown_id_is_a_no_op(dash):
+    chips = [{"id": "b", "name": "bob", "isEveryone": False, "marker": "default"}]
+    result = dash.evaluate(f"window.__argy.tapChipMarker({json.dumps(chips)}, 'missing')")
+    assert result == chips
+
+
+@pytest.mark.parametrize("chips,body,expected", [
+    ([], "hello", "hello"),
+    ([{"id": "b", "name": "bob", "isEveryone": False, "marker": "default"}], "", "@bob"),
+    ([{"id": "b", "name": "bob", "isEveryone": False, "marker": "default"}], "ping",
+     "@bob ping"),
+    ([{"id": "b", "name": "bob", "isEveryone": False, "marker": "default"},
+      {"id": "a", "name": "alice", "isEveryone": False, "marker": "default"}], "",
+     "@bob @alice"),
+    ([{"id": "b", "name": "bob", "isEveryone": False, "marker": "default"},
+      {"id": "a", "name": "alice", "isEveryone": False, "marker": "default"}], "sync up",
+     "@bob @alice sync up"),
+    ([], "", ""),
+], ids=[
+    "no-chips", "one-chip-no-body", "one-chip-with-body",
+    "two-chips-no-body", "two-chips-with-body", "nothing-at-all",
+])
+def test_serialize_message_text(dash, chips, body, expected):
+    result = dash.evaluate(f"window.__argy.serializeMessageText({json.dumps(chips)}, {body!r})")
+    assert result == expected
+
+
+def test_next_chip_id_is_unique_per_call(dash):
+    a, b = dash.evaluate("[window.__argy.nextChipId(), window.__argy.nextChipId()]")
+    assert a != b
+
+
+# =================================================== mention composer UI
+
+def test_typing_at_opens_mention_popup_and_filters(dash):
+    dash.fill("#composerInput", "@")
+    dash.wait_for_selector('[data-testid="mention-popup"]')
+    assert dash.locator('[data-testid="mention-popup"]').is_visible()
+    names = dash.locator('[data-testid="mention-candidate"]').all_inner_texts()
+    assert names == ["everyone", "claude-ui", "codex-ui", "gemini-ui", "hermes-ui"]
+    dash.fill("#composerInput", "@cod")
+    candidates = dash.locator('[data-testid="mention-candidate"]')
+    assert candidates.count() == 1
+    assert "codex-ui" in candidates.first.inner_text()
+
+
+def test_mention_candidates_never_include_the_operator(dash):
+    dash.fill("#composerInput", "@")
+    names = dash.locator('[data-testid="mention-candidate"]').all_inner_texts()
+    assert "operator" not in names
+    # No offline-peer fixture exists in this suite (an invited-but-never-
+    # touched agent never appears as a peer at all — see hub.py, agents only
+    # show up once "seen"), so this test can only prove the filter matches
+    # the removed to-menu's exact online-peer set, not exercise a live
+    # offline-exclusion case. That's the same filter, reused verbatim
+    # (dashboard.py's onlinePeerNamesInRoom mirrors :509-511 exactly).
+    assert set(names) == {"everyone", "claude-ui", "codex-ui", "gemini-ui", "hermes-ui"}
+
+
+def test_clicking_a_candidate_commits_a_mention_chip(dash):
+    dash.fill("#composerInput", "@cod")
+    dash.click('[data-testid="mention-candidate"]')
+    assert dash.locator('[data-testid="mention-popup"]').is_hidden()
+    chip = dash.locator('[data-testid="mention-chip"]')
+    assert chip.count() == 1
+    assert "codex-ui" in chip.inner_text()
+    # Committing removes "@cod" from the plain-text input — the chip lives in
+    # the rail, not inline in the text (see the top-of-plan [design call]).
+    assert dash.locator("#composerInput").input_value() == ""
+
+
+def test_committing_a_chip_returns_focus_to_the_input_for_continued_typing(dash):
+    dash.fill("#composerInput", "@cod")
+    dash.click('[data-testid="mention-candidate"]')
+    assert dash.evaluate("document.activeElement.id") == "composerInput"
+    dash.keyboard.type(" ping")
+    assert dash.locator("#composerInput").input_value() == " ping"
+
+
+def test_committing_a_second_chip_stacks_in_commit_order(dash):
+    dash.fill("#composerInput", "@cod")
+    dash.click('[data-testid="mention-candidate"]')
+    dash.keyboard.type("@cla")
+    dash.click('[data-testid="mention-candidate"]')
+    chips = dash.locator('[data-testid="mention-chip"]').all_inner_texts()
+    assert len(chips) == 2
+    assert "codex-ui" in chips[0]
+    assert "claude-ui" in chips[1]
+
+
+def test_a_peer_already_chipped_does_not_reappear_as_a_mention_candidate(dash):
+    """Review finding: filterMentionCandidates didn't exclude names already in
+    S.chips, so the same peer could be committed a second time — two
+    @codex-ui chips silently escalate the payload from targeted to broadcast
+    (resolveWirePayload's two-or-more-peer-chips rule). Excluding it from the
+    candidate list is what makes that escalation impossible from the popup."""
+    dash.fill("#composerInput", "@cod")
+    dash.click('[data-testid="mention-candidate"]')  # commits codex-ui
+    assert dash.locator('[data-testid="mention-chip"]').count() == 1
+    dash.click("#composerInput")  # commit already refocuses, but be explicit
+    dash.keyboard.type("@")
+    dash.wait_for_selector('[data-testid="mention-popup"]')
+    names = dash.locator('[data-testid="mention-candidate"]').all_inner_texts()
+    assert "codex-ui" not in names
+    assert names == ["everyone", "claude-ui", "gemini-ui", "hermes-ui"]
+
+
+def test_everyone_already_chipped_does_not_reappear_as_a_mention_candidate(dash):
+    """Review finding, second consequence: a second @everyone chip is a real,
+    tappable, functionally dead control — resolveWirePayload only ever reads
+    chips[0] among everyone-chips. Excluding "everyone" once it's committed
+    removes the dead control from the popup entirely."""
+    dash.fill("#composerInput", "@")
+    dash.click('[data-testid="mention-candidate"]')  # "everyone" is pinned first, commits it
+    assert dash.locator('[data-testid="mention-chip"]').count() == 1
+    dash.click("#composerInput")  # commit already refocuses, but be explicit
+    dash.keyboard.type("@")
+    dash.wait_for_selector('[data-testid="mention-popup"]')
+    names = dash.locator('[data-testid="mention-candidate"]').all_inner_texts()
+    assert "everyone" not in names
+    assert names == ["claude-ui", "codex-ui", "gemini-ui", "hermes-ui"]
+
+
+def test_commit_only_plain_at_mentions_with_no_interaction_send_literally_to_all(
+    dash, client, admin_headers, seeded
+):
+    dash.fill("#composerInput", "@codex-ui is faster than @claude-ui")
+    assert dash.locator('[data-testid="mention-chip"]').count() == 0
+    dash.click("#sendBtn")
+    dash.wait_for_timeout(500)
+    assert dash.locator('[data-testid="mention-chip"]').count() == 0
+    msgs = client.get("/admin/state", headers=admin_headers).json()["messages"]
+    sent = [m for m in msgs if m["text"] == "@codex-ui is faster than @claude-ui"
+            and m["room"] == seeded["room"]]
+    assert sent, "literal text should have reached the relay unparsed"
+    assert sent[0]["to"] == "all"
+
+
+def test_switching_rooms_resets_uncommitted_and_committed_mention_state(dash, seeded):
+    dash.fill("#composerInput", "@cod")
+    dash.click('[data-testid="mention-candidate"]')
+    assert dash.locator('[data-testid="mention-chip"]').count() == 1
+    dash.click(f'[data-room="{seeded["room"]}"]')
+    assert dash.locator('[data-testid="mention-chip"]').count() == 0
+    assert dash.locator('[data-testid="mention-popup"]').is_hidden()
+
+
+def test_mention_rail_appears_only_while_chips_are_committed(dash, seeded):
+    """Nick's call: the rail is absent (not just visually empty) at rest,
+    appears the instant a chip commits, and disappears again once the last
+    chip is gone — minimum chrome while typing an ordinary message. This
+    task's own commit mechanism (click a candidate) and its own reset
+    mechanism (switching rooms clears S.chips — the test right above this
+    one) are enough to exercise all three states without reaching for Task
+    3's decompose/backspace removal, which doesn't exist yet at this point
+    in the branch. Task 3's own backspace test adds one more assertion of
+    the same fact via genuine single-chip removal, once that exists."""
+    rail = dash.locator('[data-testid="mention-rail"]')
+    assert rail.is_hidden()
+    dash.fill("#composerInput", "@cod")
+    dash.click('[data-testid="mention-candidate"]')
+    assert rail.is_visible()
+    assert dash.locator('[data-testid="mention-chip"]').count() == 1
+    dash.click(f'[data-room="{seeded["room"]}"]')
+    assert rail.is_hidden()
+
+
+def test_dm_view_does_not_open_the_mention_popup(dash):
+    dash.click('[data-agent="codex-ui"]')
+    dash.fill("#composerInput", "@")
+    assert dash.locator('[data-testid="mention-popup"]').is_hidden()
+
+
+def test_committing_via_tab_produces_the_same_chip_as_a_click(dash):
+    dash.fill("#composerInput", "@cod")
+    dash.press("#composerInput", "Tab")
+    chip = dash.locator('[data-testid="mention-chip"]')
+    assert chip.count() == 1
+    assert "codex-ui" in chip.inner_text()
+
+
+def test_committing_via_enter_produces_a_chip_and_does_not_send(dash, client, admin_headers, seeded):
+    dash.fill("#composerInput", "@cod")
+    dash.press("#composerInput", "Enter")
+    chip = dash.locator('[data-testid="mention-chip"]')
+    assert chip.count() == 1
+    assert "codex-ui" in chip.inner_text()
+    # A DOM substring check against the timeline collides with an earlier
+    # test's already-sent "@codex-ui is faster than @claude-ui" message in
+    # this session-scoped room (test_commit_only_plain_at_mentions_with_no_interaction_send_literally_to_all,
+    # above) — "@cod" is a substring of "@codex-ui". Check the exact message
+    # list via the admin API instead, matching that neighboring test's own
+    # technique, so this only fails if "@cod" was itself sent as a message.
+    msgs = client.get("/admin/state", headers=admin_headers).json()["messages"]
+    assert not any(m["text"] == "@cod" for m in msgs)
+
+
+def test_arrow_down_then_enter_commits_the_second_candidate(dash):
+    dash.fill("#composerInput", "@")
+    # Popup order (Task 2's test proved this): everyone, claude-ui, codex-ui,
+    # gemini-ui, hermes-ui — one ArrowDown from the default highlight (0)
+    # lands on claude-ui.
+    dash.press("#composerInput", "ArrowDown")
+    dash.press("#composerInput", "Enter")
+    chip = dash.locator('[data-testid="mention-chip"]')
+    assert chip.count() == 1
+    assert "claude-ui" in chip.inner_text()
+
+
+def test_escape_leaves_the_typed_text_as_plain_text(dash):
+    dash.fill("#composerInput", "@cod")
+    dash.press("#composerInput", "Escape")
+    assert dash.locator('[data-testid="mention-popup"]').is_hidden()
+    assert dash.locator('[data-testid="mention-chip"]').count() == 0
+    assert dash.locator("#composerInput").input_value() == "@cod"
+
+
+def test_enter_with_the_popup_closed_still_sends(dash):
+    dash.fill("#composerInput", "plain message")
+    dash.press("#composerInput", "Enter")
+    # doSend() is a two-hop async chain (POST /admin/say, then poll()'s GET
+    # /admin/state, then render) — same as every other send-assertion test
+    # in this file (see test_commit_only_plain_at_mentions_with_no_interaction_send_literally_to_all
+    # above, which waits 500ms after a #sendBtn click for the identical
+    # reason). Asserting immediately races the network round trip.
+    dash.wait_for_timeout(500)
+    assert dash.locator('[data-testid="timeline"]').inner_text().find("plain message") >= 0
+
+
+def test_backspace_decomposes_the_last_chip_then_removes_the_bare_at(dash):
+    dash.fill("#composerInput", "@cod")
+    dash.press("#composerInput", "Tab")
+    assert dash.locator('[data-testid="mention-chip"]').count() == 1
+    assert dash.locator('[data-testid="mention-rail"]').is_visible()
+    # Tab-commit prevents the browser's default tab-focus-move and
+    # commitMentionCandidate() synchronously refocuses #composerInput either
+    # way (see the top-of-plan Architecture section) — press() also
+    # auto-focuses its target selector, so this specific sequence has no
+    # focus trap to guard against. (Contrast Task 5's chip-tap test, where
+    # the trap is real and an explicit refocus is required.)
+    dash.press("#composerInput", "Backspace")
+    assert dash.locator('[data-testid="mention-chip"]').count() == 0
+    # Task 2's test (test_mention_rail_appears_only_while_chips_are_committed)
+    # proved this via a room-switch reset, the only removal mechanism it had
+    # available; decomposeLastChip() is the genuine single-chip removal path
+    # this correction asked to see covered, and it self-refocuses the input
+    # (no click involved), so no explicit refocus is needed around this
+    # assertion either.
+    assert dash.locator('[data-testid="mention-rail"]').is_hidden()
+    assert dash.locator('[data-testid="mention-popup"]').is_visible()
+    assert dash.locator("#composerInput").input_value() == "@"
+    dash.press("#composerInput", "Backspace")
+    assert dash.locator('[data-testid="mention-popup"]').is_hidden()
+    assert dash.locator("#composerInput").input_value() == ""
+
+
+def test_preview_strip_matches_the_actual_payload_for_a_plain_broadcast(
+    dash, client, admin_headers, seeded
+):
+    strip = dash.locator('[data-testid="preview-strip"]')
+    assert "everyone" in strip.inner_text()
+    assert strip.inner_text().endswith("reply expected: none")
+    dash.fill("#composerInput", "hello room")
+    dash.press("#composerInput", "Enter")
+    dash.wait_for_timeout(500)
+    msgs = client.get("/admin/state", headers=admin_headers).json()["messages"]
+    sent = [m for m in msgs if m["text"] == "hello room" and m["room"] == seeded["room"]]
+    assert sent, "message should have reached the relay"
+    assert sent[0]["to"] == "all"
+    assert sent[0]["expects_reply"] == "none"
+
+
+def test_preview_strip_shows_the_resolved_target_for_a_committed_chip(dash):
+    # Display-only at this point in the branch — doSend() still sources
+    # to/expects_reply from the old pills until Task 5's cutover, so this
+    # test asserts the strip's TEXT only, not an actual sent payload (that
+    # assertion belongs to Task 5, once the strip and the real send path
+    # agree).
+    dash.fill("#composerInput", "@cod")
+    dash.press("#composerInput", "Tab")
+    strip = dash.locator('[data-testid="preview-strip"]')
+    assert "codex-ui" in strip.inner_text()
+    assert strip.inner_text().endswith("reply expected: codex-ui")
+
+
+def test_dm_view_preview_strip_tap_cycles_the_reply_marker_display(dash):
+    dash.click('[data-agent="codex-ui"]')
+    strip = dash.locator('[data-testid="preview-strip"]')
+    assert strip.inner_text().endswith("reply expected: codex-ui")
+    strip.click()
+    assert strip.inner_text().endswith("reply expected: anyone")
+    strip.click()
+    assert strip.inner_text().endswith("reply expected: none")
+    strip.click()
+    assert strip.inner_text().endswith("reply expected: codex-ui")
+
+
+def test_room_view_preview_strip_is_not_tappable(dash):
+    strip = dash.locator('[data-testid="preview-strip"]')
+    before = strip.inner_text()
+    strip.click()
+    assert strip.inner_text() == before
+
+
+def test_targeted_mention_matches_the_actual_payload_the_bug_regression(
+    dash, client, admin_headers, seeded
+):
+    """The bug this whole redesign fixes: a targeted send used to show
+    'expects · —' while the relay actually resolved an obligated responder.
+    The preview strip and the real stored message must agree, and both must
+    show the target, not '—'/none."""
+    dash.fill("#composerInput", "@cod")
+    dash.press("#composerInput", "Tab")
+    strip = dash.locator('[data-testid="preview-strip"]')
+    assert "codex-ui" in strip.inner_text()
+    assert strip.inner_text().endswith("reply expected: codex-ui")
+    dash.keyboard.type(" ping")
+    dash.keyboard.press("Enter")
+    msgs = client.get("/admin/state", headers=admin_headers).json()["messages"]
+    sent = [m for m in msgs if m["text"] == "@codex-ui ping" and m["room"] == seeded["room"]]
+    assert sent, "message should have reached the relay"
+    assert sent[0]["to"] == "codex-ui"
+    assert sent[0]["expects_reply"] == "codex-ui"
+
+
+def test_two_peer_chips_force_to_all_in_the_actual_payload(
+    dash, client, admin_headers, seeded
+):
+    dash.fill("#composerInput", "@cod")
+    dash.press("#composerInput", "Tab")
+    dash.keyboard.type("@cla")
+    dash.press("#composerInput", "Tab")
+    assert dash.locator('[data-testid="mention-chip"]').count() == 2
+    dash.keyboard.type(" sync up")
+    dash.keyboard.press("Enter")
+    msgs = client.get("/admin/state", headers=admin_headers).json()["messages"]
+    sent = [m for m in msgs if m["text"] == "@codex-ui @claude-ui sync up"
+            and m["room"] == seeded["room"]]
+    assert sent, "message should have reached the relay"
+    assert sent[0]["to"] == "all"
+    assert sent[0]["expects_reply"] == "codex-ui"
+
+
+def test_tapping_a_chip_marker_changes_the_actual_sent_payload(
+    dash, client, admin_headers, seeded
+):
+    dash.fill("#composerInput", "@cod")
+    dash.press("#composerInput", "Tab")
+    chip = dash.locator('[data-testid="mention-chip"]')
+    chip.click()
+    # .conv-chip__marker is styled text-transform:uppercase, so Playwright's
+    # rendered inner_text() comes back as "ANYONE" even though the DOM text
+    # content the app actually sets is lowercase "anyone" — compare
+    # case-insensitively rather than fighting a legitimate CSS rule.
+    assert "anyone" in chip.inner_text().lower()
+    # Clicking the chip moves DOM focus onto the chip button itself —
+    # data-chip-tap deliberately does not refocus #composerInput (see the
+    # top-of-plan Architecture section: this is the one genuine focus-trap
+    # surface in this implementation). Global page.keyboard.type()/press()
+    # send to whatever currently has focus, so without this explicit click
+    # back into the input the keystrokes below would silently land on the
+    # chip button instead.
+    dash.click("#composerInput")
+    dash.keyboard.type("ping")
+    dash.keyboard.press("Enter")
+    msgs = client.get("/admin/state", headers=admin_headers).json()["messages"]
+    # sent[-1], not sent[0]: the earlier bug-regression test in this same
+    # session-scoped room sends the identical text "@codex-ui ping" with a
+    # different (untapped) expects_reply, so the first match by text can be
+    # that older message rather than the one this test just sent. recent()
+    # returns ascending by id, so the last match is the one just sent.
+    sent = [m for m in msgs if m["text"] == "@codex-ui ping" and m["room"] == seeded["room"]]
+    assert sent, "message should have reached the relay"
+    assert sent[-1]["to"] == "codex-ui"
+    assert sent[-1]["expects_reply"] == "anyone"
+
+
+def test_dm_preview_strip_tap_changes_the_actual_sent_payload(
+    dash, client, admin_headers, seeded
+):
+    dash.click('[data-agent="codex-ui"]')
+    dash.locator('[data-testid="preview-strip"]').click()  # default -> anyone
+    dash.fill("#composerInput", "hey")
+    dash.press("#composerInput", "Enter")
+    msgs = client.get("/admin/state", headers=admin_headers).json()["messages"]
+    sent = [m for m in msgs if m["text"] == "hey" and m["to"] == "codex-ui"]
+    assert sent, "message should have reached the relay"
+    assert sent[-1]["expects_reply"] == "anyone"
+
+
+def test_everyone_mention_reply_marker_cycles(dash):
+    """Replaces the removed test_expects_pill_cycles: the room-broadcast
+    reply-expected toggle is now reached via the @everyone chip instead of
+    the deleted #expectsPill, but the same capability (broadcast, is a reply
+    expected from anyone) must stay reachable and correct."""
+    dash.fill("#composerInput", "@")
+    dash.click('[data-testid="mention-candidate"]')  # "everyone" is pinned first
+    chip = dash.locator('[data-testid="mention-chip"]')
+    assert chip.count() == 1
+    strip = dash.locator('[data-testid="preview-strip"]')
+    assert strip.inner_text().endswith("reply expected: none")
+    chip.click()
+    assert strip.inner_text().endswith("reply expected: anyone")
+    chip.click()
+    assert strip.inner_text().endswith("reply expected: none")
+
+
+def test_mention_text_in_sent_messages_is_highlighted(dash, client, seeded):
+    auth = {"Authorization": f"Bearer {seeded['codes']['claude-ui']}"}
+    client.post("/messages", headers=auth,
+                json={"to": "all", "text": "hey @codex-ui can you check this"})
+    dash.wait_for_timeout(3500)
+    highlighted = dash.locator(".conv-mention-text", has_text="@codex-ui")
+    assert highlighted.count() >= 1
+
+
 # ============================================================ rendering
 def test_sidebar_lists_rooms_and_agents(dash, seeded):
     assert dash.locator(f'[data-room="{seeded["room"]}"]').count() == 1
@@ -243,20 +851,12 @@ def test_clicking_an_agent_opens_a_filtered_direct_view(dash):
     assert dash.locator('[data-testid="channel-title"]').inner_text() == "codex-ui"
     assert dash.locator(".conv-header__filterchip").count() == 1
     assert dash.locator("#composerInput").get_attribute("placeholder") == "Message @codex-ui"
-    to_pill = dash.locator("#toPill")
-    assert "codex-ui" in to_pill.inner_text()
-    assert to_pill.is_disabled()
+    # The old locked #toPill is gone (removed with the cutover to @mention
+    # chips) — its replacement is the always-visible wire-preview strip,
+    # which must show the DM's locked target truthfully.
+    assert "codex-ui" in dash.locator('[data-testid="preview-strip"]').inner_text()
     dash.click("#backToRoom")
     assert dash.locator('[data-testid="channel-title"]').inner_text() == "uiroom"
-
-
-def test_expects_pill_cycles(dash):
-    pill = dash.locator("#expectsPill")
-    assert pill.inner_text().endswith("—")
-    pill.click()
-    assert pill.inner_text().endswith("anyone")
-    pill.click()
-    assert pill.inner_text().endswith("—")
 
 
 def test_invite_action_offers_agents_from_other_rooms_not_the_admin_panel(dash, client, admin_headers, seeded):
