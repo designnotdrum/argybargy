@@ -376,6 +376,45 @@ def test_delete_room_dialog_can_be_cancelled(dash, client, admin_headers):
     assert any(c["room"] == "spared-room" for c in state["codes"]), "cancel must not delete anything"
 
 
+def test_deleting_the_room_you_are_viewing_from_a_dm_does_not_leave_a_dangling_view(dash, client, admin_headers):
+    """Every other delete test deletes some other room. This one deletes the room
+    currently being viewed while parked in a DM sub-view inside it — the case where
+    S.view kept pointing at a room that no longer existed, the composer stayed live,
+    and there was no reachable listener left for whatever got sent into it."""
+    code = client.post("/admin/invite", headers=admin_headers,
+                        json={"name": "doomed-agent", "room": "doomed-room"}).json()["code"]
+    # A merely-invited (not-yet-connected) agent renders as data-invited, not
+    # data-agent, and isn't clickable into a DM — so make it check in first.
+    client.get("/whoami", headers={"Authorization": f"Bearer {code}"})
+    dash.wait_for_selector('[data-room="doomed-room"]', timeout=15000)
+
+    dash.click('[data-room="doomed-room"]')
+    dash.wait_for_selector('[data-agent="doomed-agent"]', timeout=15000)
+    dash.click('[data-agent="doomed-agent"]')
+    assert dash.locator('[data-testid="channel-title"]').inner_text() == "doomed-agent"
+
+    dash.hover('[data-room="doomed-room"]')
+    dash.click('[data-room-menu="doomed-room"]')
+    dash.click('[data-delete-room="doomed-room"]')
+    dash.wait_for_selector('[data-testid="delete-room-dialog"]')
+    dash.fill("#drdConfirmInput", "doomed-room")
+    dash.click("#drdConfirm")
+    dash.wait_for_selector('[data-testid="delete-room-dialog"]', state="detached", timeout=15000)
+
+    # The next poll must snap the dangling DM view back to a room that still
+    # exists — not leave the header/composer pointed at a room nobody can read.
+    dash.wait_for_function(
+        "() => document.querySelector('[data-testid=\"channel-title\"]').textContent !== 'doomed-agent'",
+        timeout=15000,
+    )
+    assert dash.locator("#backToRoom").count() == 0
+    assert dash.locator(".conv-header__filterchip").count() == 0
+    placeholder = dash.locator("#composerInput").get_attribute("placeholder")
+    assert placeholder != "Message @doomed-agent"
+    assert placeholder.startswith("Message #")
+    assert dash.locator('[data-room="doomed-room"]').count() == 0
+
+
 def test_sidebar_and_conversation_pane_show_a_create_room_cta_with_zero_rooms(page, live_server, admin_headers):
     token = admin_headers["X-Admin-Token"]
     page.add_init_script(f"localStorage.setItem('cc_admin', {token!r});")

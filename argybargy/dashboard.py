@@ -1106,7 +1106,7 @@ DASHBOARD_HTML = r"""<!doctype html>
           S.agents = reconcile(j);
           S.conn = "live";
           var rooms = roomList();
-          if (rooms.length && S.view.kind === "room" && rooms.indexOf(S.view.room) < 0) {
+          if (rooms.length && (S.view.kind === "room" || S.view.kind === "dm") && rooms.indexOf(S.view.room) < 0) {
             S.view = { kind: "room", room: rooms[0], agent: null };
           }
           renderAll();
