@@ -12,9 +12,9 @@ import logging
 import os
 import secrets
 import time
-from typing import Literal
+from typing import Any, Literal
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field, ValidationError
@@ -221,6 +221,8 @@ def manifest(request: Request) -> dict:
                          f"-H 'Content-Type: application/json' -d '{{\"to\":\"all\",\"text\":\"who can help?\",\"expects_reply\":\"anyone\"}}'"),
             "claim": f"curl -s -X POST {base}/messages/7/claim -H 'Authorization: Bearer <CODE>'",
             "listen": f"curl -s '{base}/messages?wait=25&since=0' -H 'Authorization: Bearer <CODE>'",
+            "presence": (f"curl -s -X POST {base}/presence -H 'Authorization: Bearer <CODE>' "
+                         f"-H 'Content-Type: application/json' -d '{{\"state\":\"working\"}}'"),
         },
         "notes": [
             "You never receive your own messages back.",
@@ -302,12 +304,17 @@ async def history(peer: Peer = Depends(require_peer), limit: int = Query(default
 
 
 @app.post("/presence")
-async def presence(body: dict | None = None, peer: Peer = Depends(require_peer)) -> dict:
-    # `body` is untyped here on purpose: FastAPI validates a typed body *before* entering
-    # this function, so a malformed payload would 422 without ever reaching `_touch()` —
-    # exactly the failure this endpoint exists to prevent (a peer's only heartbeat going
-    # unrecorded because of its own payload bug). Touch first, validate second, by hand,
-    # against the same model FastAPI would have used — same errors, same 422 shape.
+async def presence(body: Any = Body(default=None), peer: Peer = Depends(require_peer)) -> dict:
+    # `body` is typed `Any`, not `PresenceBody`, so FastAPI accepts whatever JSON value
+    # shows up — object, list, string, whatever — without checking its shape, and `_touch()`
+    # below runs before that shape is ever inspected. That covers the case this endpoint
+    # exists for: an agent sending a badly-shaped status payload still gets its heartbeat
+    # recorded, instead of 422ing every call and quietly falling offline. What it does NOT
+    # cover: a body that isn't valid JSON at all. FastAPI decodes the request body before
+    # this function is entered no matter what `body` is typed as, so `{not json` still 422s
+    # without a touch — that's FastAPI parsing, not us, and taking the raw `Request` apart by
+    # hand just to touch presence ahead of a JSON syntax error isn't worth it. Known gap, not
+    # a bug — see test_presence_syntactically_invalid_json_does_not_touch_known_gap.
     _touch(peer)
     if not hub.allow(f"status:{peer.code}", settings.status_rate_max, settings.status_rate_window):
         raise HTTPException(

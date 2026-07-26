@@ -31,11 +31,12 @@ def test_openapi_and_docs_served_by_default(client):
 
 
 def test_openapi_presence_requestbody_describes_presence_body(client):
-    """POST /presence takes an untyped body (validated by hand, after `_touch()`) so a
-    malformed payload can never eat a peer's heartbeat — see the comment on `presence()`.
-    That untyping means FastAPI can't derive the schema on its own; `app.py` patches the
-    generated document to restore it. Guard the patch: without it, this schema silently
-    reverts to a bare object and /docs stops describing the real shape."""
+    """POST /presence takes an `Any`-typed body (validated by hand, after `_touch()`) so
+    a badly-shaped payload can't eat a peer's heartbeat — see the comment on `presence()`
+    for the one exception (JSON that fails to parse at all). That untyping means FastAPI
+    can't derive the schema on its own; `app.py` patches the generated document to restore
+    it. Guard the patch: without it, this schema silently reverts to a bare object and
+    /docs stops describing the real shape."""
     schema = client.get("/openapi.json").json()["paths"]["/presence"]["post"]["requestBody"]
     schema = schema["content"]["application/json"]["schema"]
 
@@ -345,6 +346,49 @@ def test_presence_over_long_note_still_counts_as_a_heartbeat(client, make_code, 
     me = next(p for p in room if p["name"] == "worker5b")
     assert me["online"] is True
     assert me["seconds_since_seen"] < 1.0
+
+
+def test_presence_non_object_json_body_now_counts_as_a_heartbeat(client, make_code, admin_headers):
+    """The object-shape hole this endpoint used to have: a body that parses as JSON but
+    isn't a JSON object (a bare list here) used to fail FastAPI's own `dict`-typed
+    validation *before* the handler ran, so `_touch()` never happened and the heartbeat
+    was silently dropped — the exact failure mode this endpoint exists to prevent. `body`
+    is now typed `Any`, so FastAPI accepts the list and lets the handler touch first,
+    validate second, same as it already did for a badly-shaped object body."""
+    code, auth = make_code("worker8b")
+    r = client.post("/presence", headers=auth, json=[1, 2, 3])
+    assert r.status_code == 422
+    assert r.json()["detail"][0]["loc"] == ["body"]
+    room = client.get("/admin/state", headers=admin_headers).json()["peers"]["default"]
+    me = next(p for p in room if p["name"] == "worker8b")
+    assert me["online"] is True
+
+
+def test_presence_bare_json_string_body_now_counts_as_a_heartbeat(client, make_code, admin_headers):
+    """Same hole, a different non-object shape (a bare JSON string)."""
+    code, auth = make_code("worker9b")
+    r = client.post("/presence", headers=auth, json="hello")
+    assert r.status_code == 422
+    assert r.json()["detail"][0]["loc"] == ["body"]
+    room = client.get("/admin/state", headers=admin_headers).json()["peers"]["default"]
+    me = next(p for p in room if p["name"] == "worker9b")
+    assert me["online"] is True
+
+
+def test_presence_syntactically_invalid_json_does_not_touch_known_gap(client, make_code, admin_headers):
+    """The one gap the fix above does NOT close, on purpose: a body that isn't valid JSON
+    at all. FastAPI decodes the request body before resolving `Depends(require_peer)` or
+    entering the handler, no matter what `body` is typed as — so a syntax error still 422s
+    without a touch. Closing it would mean parsing the raw `Request` by hand instead of
+    letting FastAPI do it, which isn't worth it for a body no real JSON serializer emits.
+    This test pins the gap down so nobody 'fixes' it by accident and finds out the hard
+    way that it changes the 422 contract."""
+    code, auth = make_code("worker10b")
+    r = client.post("/presence", headers={**auth, "Content-Type": "application/json"}, content=b"{not json")
+    assert r.status_code == 422
+    assert r.json()["detail"][0]["type"] == "json_invalid"
+    room = client.get("/admin/state", headers=admin_headers).json()["peers"].get("default", [])
+    assert not any(p["name"] == "worker10b" for p in room)
 
 
 def test_presence_rate_limited_429(client, make_code):
