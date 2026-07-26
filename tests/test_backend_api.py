@@ -294,7 +294,7 @@ def test_presence_null_state_leaves_note_untouched(client, make_code):
 
 def test_presence_invalid_state_rejected(client, make_code):
     code, auth = make_code("worker4")
-    r = client.post("/presence", headers=auth, json={"state": "done"})
+    r = client.post("/presence", headers=auth, json={"state": "thinking"})
     assert r.status_code == 422
 
 
@@ -319,9 +319,9 @@ def test_presence_rate_limited_429(client, make_code):
 
 def test_whoami_reflects_own_status(client, make_code):
     code, auth = make_code("selfcheck")
-    client.post("/presence", headers=auth, json={"state": "thinking", "note": "reading the brief"})
+    client.post("/presence", headers=auth, json={"state": "working", "note": "reading the brief"})
     me = client.get("/whoami", headers=auth).json()
-    assert me["status"] == "thinking" and me["status_note"] == "reading the brief"
+    assert me["status"] == "working" and me["status_note"] == "reading the brief"
     assert me["status_stale"] is False
 
 

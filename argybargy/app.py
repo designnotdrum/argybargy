@@ -144,8 +144,8 @@ class SendBody(BaseModel):
 
 
 class PresenceBody(BaseModel):
-    state: Literal["idle", "thinking", "working", "blocked"] | None = Field(
-        default=None, description="idle | thinking | working | blocked, or null to clear."
+    state: Literal["idle", "working", "blocked"] | None = Field(
+        default=None, description="idle | working | blocked, or null to clear."
     )
     note: str | None = Field(
         default=None, max_length=settings.status_note_max, description="Free-text status detail."
