@@ -56,6 +56,18 @@ DASHBOARD_HTML = r"""<!doctype html>
 .sb-room-menuitem--danger{color:var(--red)}
 .sb-room-restore{margin-right:6px;padding:3px 8px;border:1px solid var(--border-strong);border-radius:6px;background:transparent;color:var(--muted);font-size:11px;cursor:pointer}
 .sb-room-restore:hover{color:var(--text);border-color:var(--text)}
+.drd-scrim{position:fixed;inset:0;z-index:55;border:none;background:var(--scrim);cursor:default}
+.drd-wrap{position:fixed;top:50%;left:50%;z-index:56;transform:translate(-50%,-50%)}
+.drd-root{width:min(360px,calc(100vw - 32px));padding:16px;border:1px solid var(--border-strong);border-radius:10px;background:var(--surface);color:var(--text);box-shadow:var(--pop-shadow)}
+.drd-title{margin:0 0 8px;font-size:14px;font-weight:600}
+.drd-copy{margin:0 0 12px;color:var(--muted);font-size:12px;line-height:1.5}
+.drd-label{display:block;margin-bottom:4px;font-size:11px;color:var(--muted)}
+.drd-field{box-sizing:border-box;width:100%;padding:6px 8px;margin-bottom:12px;border:1px solid var(--border);border-radius:6px;background:var(--raised);color:var(--text);font-size:12px}
+.drd-actrow{display:flex;justify-content:flex-end;gap:8px}
+.drd-btn{padding:6px 12px;border:1px solid var(--border-strong);border-radius:6px;background:var(--raised);color:var(--text);font-size:12px;cursor:pointer}
+.drd-btn.danger{border-color:var(--red);color:var(--red)}
+.drd-btn:disabled{opacity:.5;cursor:not-allowed}
+.drd-errorbox{margin-top:8px;padding:6px 8px;border:1px solid var(--red-dim);border-radius:6px;background:var(--red-dim);color:var(--red);font-size:11px}
 </style>
 </head>
 <body>
@@ -107,6 +119,7 @@ DASHBOARD_HTML = r"""<!doctype html>
     archivedRooms: loadArchivedRooms(),
     archivedOpen: false,
     roomMenuOpen: null,
+    deleteRoom: null,
     navOpen: false,
     drawerOpen: false,
     menuOpen: false,
@@ -466,7 +479,8 @@ DASHBOARD_HTML = r"""<!doctype html>
         E("button", "sb-room-dots", { type: "button", "data-room-menu": r, "aria-label": "Room options for " + r }, "⋯")));
     if (S.roomMenuOpen === r) {
       var menu = E("div", "sb-room-menu", { "data-testid": "room-menu-" + r },
-        E("button", "sb-room-menuitem", { type: "button", "data-archive-room": r }, "Archive"));
+        E("button", "sb-room-menuitem", { type: "button", "data-archive-room": r }, "Archive"),
+        E("button", "sb-room-menuitem sb-room-menuitem--danger", { type: "button", "data-delete-room": r }, "Delete room…"));
       wrap.lastChild.appendChild(menu);
     }
     return wrap;
@@ -828,6 +842,77 @@ DASHBOARD_HTML = r"""<!doctype html>
     });
   }
 
+  /* ------------------------------------------------------------ delete room */
+  function deleteRoomRequest(room) {
+    return api("/admin/delete-room", { room: room });
+  }
+  function renderDeleteDialog() {
+    var wrap = document.getElementById("drdWrap");
+    var scrim = document.getElementById("drdScrim");
+    if (!wrap || !scrim) { return; }
+    var open = !!S.deleteRoom;
+    wrap.hidden = !open;
+    scrim.hidden = !open;
+    if (!open) { return; }
+    var root = document.getElementById("drdRoot");
+    if (!root || root.getAttribute("data-room") !== S.deleteRoom.target) {
+      buildDeleteDialog();
+    } else {
+      syncDeleteDialog();
+    }
+  }
+  function buildDeleteDialog() {
+    var wrap = document.getElementById("drdWrap");
+    var room = S.deleteRoom.target;
+    var messages = ((S.data && S.data.messages) || []).filter(function (m) { return m.room === room; }).length;
+    var codes = ((S.data && S.data.codes) || []).filter(function (c) { return c.room === room; }).length;
+    var root = E("div", "drd-root", { id: "drdRoot", "data-room": room, "aria-label": "Delete room", "data-testid": "delete-room-dialog" });
+    root.appendChild(E("h2", "drd-title", null, "Delete #" + room));
+    root.appendChild(E("p", "drd-copy", null,
+      "This permanently deletes " + messages + " message" + (messages === 1 ? "" : "s") +
+      " and revokes " + codes + " agent access code" + (codes === 1 ? "" : "s") +
+      " for #" + room + ". Agents using those codes will lose access immediately."));
+    root.appendChild(E("label", "drd-label", { "for": "drdConfirmInput" }, "Type ", E("b", null, null, room), " to confirm"));
+    root.appendChild(E("input", "drd-field", { id: "drdConfirmInput", autocomplete: "off", value: S.deleteRoom.typed }));
+    root.appendChild(E("div", "drd-actrow", null,
+      E("button", "drd-btn", { type: "button", id: "drdCancel" }, "Cancel"),
+      E("button", "drd-btn danger", { type: "button", id: "drdConfirm" }, "Delete room")));
+    root.appendChild(E("div", null, { id: "drdOut" }));
+    wrap.textContent = "";
+    wrap.appendChild(root);
+    var input = document.getElementById("drdConfirmInput");
+    if (input) { input.focus(); }
+    syncDeleteDialog();
+  }
+  function syncDeleteDialog() {
+    var confirm = document.getElementById("drdConfirm");
+    if (!confirm || !S.deleteRoom) { return; }
+    confirm.disabled = S.deleteRoom.typed !== S.deleteRoom.target || S.deleteRoom.pending;
+    confirm.textContent = S.deleteRoom.pending ? "Deleting…" : "Delete room";
+    var out = document.getElementById("drdOut");
+    if (out) {
+      out.textContent = "";
+      if (S.deleteRoom.error) { out.appendChild(E("div", "drd-errorbox", null, S.deleteRoom.error)); }
+    }
+  }
+  function doDeleteRoom() {
+    if (!S.deleteRoom || S.deleteRoom.typed !== S.deleteRoom.target || S.deleteRoom.pending) { return; }
+    var room = S.deleteRoom.target;
+    S.deleteRoom.pending = true;
+    syncDeleteDialog();
+    deleteRoomRequest(room).then(function () {
+      S.deleteRoom = null;
+      var done = document.getElementById("drdRoot");
+      if (done) { done.remove(); }
+      renderDeleteDialog();
+      return poll();
+    }).catch(function () {
+      S.deleteRoom.pending = false;
+      S.deleteRoom.error = "Could not delete the room. Try again.";
+      syncDeleteDialog();
+    });
+  }
+
   /* ------------------------------------------------------------------- net */
   function api(path, body) {
     return fetch(path, {
@@ -865,6 +950,7 @@ DASHBOARD_HTML = r"""<!doctype html>
     renderComposer();
     renderDrawer();
     renderCreateRoom();
+    renderDeleteDialog();
     var navWrap = document.getElementById("navWrap");
     var navScrim = document.getElementById("navScrim");
     if (navWrap) {
@@ -962,6 +1048,9 @@ DASHBOARD_HTML = r"""<!doctype html>
     root.appendChild(E("button", "crp-scrim", { id: "crScrim", type: "button", "aria-label": "Close create room", hidden: true }));
     root.appendChild(E("div", "crp-wrap", { id: "crWrap", hidden: true }));
 
+    root.appendChild(E("button", "drd-scrim", { id: "drdScrim", type: "button", "aria-label": "Cancel delete room", hidden: true }));
+    root.appendChild(E("div", "drd-wrap", { id: "drdWrap", hidden: true }));
+
     app.appendChild(root);
   }
 
@@ -1023,6 +1112,14 @@ DASHBOARD_HTML = r"""<!doctype html>
         renderSidebar();
         return;
       }
+      if (t.hasAttribute("data-delete-room")) {
+        var deleteTarget = t.getAttribute("data-delete-room");
+        S.roomMenuOpen = null;
+        S.deleteRoom = { target: deleteTarget, typed: "", pending: false, error: null };
+        renderSidebar();
+        renderDeleteDialog();
+        return;
+      }
       if (t.hasAttribute("data-theme-pick")) { applyTheme(t.getAttribute("data-theme-pick")); return; }
       if (t.hasAttribute("data-to")) {
         var pick = t.getAttribute("data-to");
@@ -1057,6 +1154,14 @@ DASHBOARD_HTML = r"""<!doctype html>
           break;
         }
         case "crSubmit": doCreateRoom(); break;
+        case "drdCancel": case "drdScrim": {
+          S.deleteRoom = null;
+          var drdRoot = document.getElementById("drdRoot");
+          if (drdRoot) { drdRoot.remove(); }
+          renderDeleteDialog();
+          break;
+        }
+        case "drdConfirm": doDeleteRoom(); break;
         case "navScrim": S.navOpen = false; renderAll(); break;
         case "openDrawer": S.drawerOpen = true; renderDrawer(); break;
         case "convInviteBtn":
@@ -1093,6 +1198,10 @@ DASHBOARD_HTML = r"""<!doctype html>
     document.addEventListener("input", function (ev) {
       if (ev.target.id === "composerInput") { renderComposer(); }
       if (ev.target.id === "crRoom" || ev.target.id === "crName") { refreshCreateRoomHint(); }
+      if (ev.target.id === "drdConfirmInput" && S.deleteRoom) {
+        S.deleteRoom.typed = ev.target.value;
+        syncDeleteDialog();
+      }
     });
     document.addEventListener("keydown", function (ev) {
       if (ev.target.id === "composerInput" && ev.key === "Enter") { ev.preventDefault(); doSend(); }

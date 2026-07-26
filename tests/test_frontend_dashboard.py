@@ -27,12 +27,12 @@ def test_page_has_no_dynamic_code_execution():
     assert "new Function" not in DASHBOARD_HTML
 
 
-def test_page_only_talks_to_the_five_admin_endpoints():
+def test_page_only_talks_to_the_six_admin_endpoints():
     called = set(re.findall(r'fetch\(\s*"(/[^"]*)"', DASHBOARD_HTML))
     called |= set(re.findall(r'api\(\s*"(/[^"]*)"', DASHBOARD_HTML))
     assert called == {
         "/admin/state", "/admin/say", "/admin/invite",
-        "/admin/revoke", "/admin/regenerate-token",
+        "/admin/revoke", "/admin/regenerate-token", "/admin/delete-room",
     }, called
 
 
@@ -270,6 +270,47 @@ def test_archiving_a_room_moves_it_into_the_archived_disclosure_and_back(dash, c
 
     dash.click('[aria-label="Restore archiveroom"]')
     assert room_list.locator('[data-room="archiveroom"]').count() == 1
+
+
+def test_delete_room_requires_typing_the_exact_room_name_to_confirm(dash, client, admin_headers):
+    client.post("/admin/invite", headers=admin_headers, json={"name": "condemned", "room": "condemned-room"})
+    dash.wait_for_selector('[data-room="condemned-room"]', timeout=15000)
+
+    dash.hover('[data-room="condemned-room"]')
+    dash.click('[data-room-menu="condemned-room"]')
+    dash.click('[data-delete-room="condemned-room"]')
+
+    dialog = dash.locator('[data-testid="delete-room-dialog"]')
+    assert dialog.is_visible()
+    confirm = dash.locator("#drdConfirm")
+    assert confirm.is_disabled()
+
+    dash.fill("#drdConfirmInput", "wrong-name")
+    assert confirm.is_disabled()
+
+    dash.fill("#drdConfirmInput", "condemned-room")
+    assert confirm.is_enabled()
+
+    confirm.click()
+    dash.wait_for_selector('[data-testid="delete-room-dialog"]', state="detached", timeout=15000)
+
+    state = client.get("/admin/state", headers=admin_headers).json()
+    assert all(c["room"] != "condemned-room" for c in state["codes"])
+
+
+def test_delete_room_dialog_can_be_cancelled(dash, client, admin_headers):
+    client.post("/admin/invite", headers=admin_headers, json={"name": "spared", "room": "spared-room"})
+    dash.wait_for_selector('[data-room="spared-room"]', timeout=15000)
+
+    dash.hover('[data-room="spared-room"]')
+    dash.click('[data-room-menu="spared-room"]')
+    dash.click('[data-delete-room="spared-room"]')
+    dash.wait_for_selector('[data-testid="delete-room-dialog"]')
+    dash.click("#drdCancel")
+    assert dash.locator('[data-testid="delete-room-dialog"]').count() == 0
+
+    state = client.get("/admin/state", headers=admin_headers).json()
+    assert any(c["room"] == "spared-room" for c in state["codes"]), "cancel must not delete anything"
 
 
 def test_mobile_viewport_collapses_the_sidebar_into_a_drawer(dash):
