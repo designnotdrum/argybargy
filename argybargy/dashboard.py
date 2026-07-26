@@ -45,8 +45,14 @@ DASHBOARD_HTML = r"""<!doctype html>
 .crp-btn:disabled{opacity:.5;cursor:not-allowed}
 .conv-header__invite{display:flex;align-items:center;gap:4px;padding:3px 8px;margin-left:8px;border:1px solid var(--border-strong);border-radius:6px;background:transparent;color:var(--muted);font-size:11px;cursor:pointer}
 .conv-header__invite:hover{color:var(--text);border-color:var(--text)}
-.sb-roomrow{position:relative;display:flex;align-items:center}
-.sb-roomrow .sb-room{flex:1}
+/* The row itself owns the highlight, not the inner button — otherwise the ⋯
+   sits outside the highlighted area and reads as detached from its row. */
+.sb-roomrow{position:relative;display:flex;align-items:center;width:calc(100% - 12px);margin:0 6px;padding-right:4px;border-radius:7px}
+.sb-roomrow .sb-room{flex:1;width:auto;margin:0;background:none}
+.sb-roomrow .sb-room:hover{background:none}
+.sb-roomrow:hover,.sb-roomrow.menu-open{background:color-mix(in srgb, var(--raised) 70%, transparent)}
+.sb-roomrow:has(.sb-room.active){background:var(--raised)}
+.sb-roomrow.menu-open .sb-room-dots{display:flex}
 .sb-room-menuwrap{position:relative}
 .sb-room-dots{display:none;align-items:center;justify-content:center;width:20px;height:20px;padding:0;margin-right:6px;border:none;border-radius:5px;background:transparent;color:var(--faint);cursor:pointer;font-size:13px;line-height:1}
 .sb-roomrow:hover .sb-room-dots{display:flex}
@@ -68,6 +74,19 @@ DASHBOARD_HTML = r"""<!doctype html>
 .drd-btn.danger{border-color:var(--red);color:var(--red)}
 .drd-btn:disabled{opacity:.5;cursor:not-allowed}
 .drd-errorbox{margin-top:8px;padding:6px 8px;border:1px solid var(--red-dim);border-radius:6px;background:var(--red-dim);color:var(--red);font-size:11px}
+.ip-scrim{position:fixed;inset:0;z-index:45;border:none;background:var(--scrim);cursor:default}
+.ip-wrap{position:fixed;top:52px;right:16px;z-index:46}
+.ip-root{width:min(300px,calc(100vw - 32px));padding:12px;border:1px solid var(--border-strong);border-radius:10px;background:var(--surface);color:var(--text);box-shadow:var(--pop-shadow)}
+.ip-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;font-weight:600;font-size:12px}
+.ip-close{border:none;background:transparent;color:var(--muted);cursor:pointer;font-size:16px;line-height:1}
+.ip-list{display:flex;flex-direction:column;gap:2px;max-height:240px;overflow-y:auto;margin-bottom:8px}
+.ip-item{display:flex;align-items:center;gap:8px;width:100%;padding:5px 6px;border:none;border-radius:6px;background:transparent;color:var(--text);font-size:12.5px;text-align:left;cursor:pointer}
+.ip-item:hover{background:var(--raised)}
+.ip-item__name{flex:1}
+.ip-empty{margin:0 0 8px;color:var(--faint);font-size:11.5px}
+.ip-newrow{display:flex;gap:6px}
+.ip-field{flex:1;min-width:0;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--raised);color:var(--text);font-size:12px}
+.ip-btn{padding:6px 10px;border:1px solid var(--border-strong);border-radius:6px;background:var(--raised);color:var(--text);font-size:12px;cursor:pointer}
 .sb-rooms-empty{padding:6px 16px 10px}
 .sb-rooms-empty__text{margin:0;color:var(--faint);font-size:12px}
 .conv-noroom{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:8px;padding:24px;text-align:center}
@@ -118,6 +137,7 @@ DASHBOARD_HTML = r"""<!doctype html>
     conn: "idle",             /* idle | live | error */
     view: { kind: "room", room: "", agent: null },
     inviteRoomHint: null,
+    invitePicker: null,
     agents: [],               /* reconciled presence */
     now: Date.now(),
     stick: true,              /* timeline pinned to bottom */
@@ -488,7 +508,7 @@ DASHBOARD_HTML = r"""<!doctype html>
       return E("div", "sb-roomrow", null, btn,
         E("button", "sb-room-restore", { type: "button", "data-restore-room": r, "aria-label": "Restore " + r }, "Restore"));
     }
-    var wrap = E("div", "sb-roomrow", null, btn,
+    var wrap = E("div", S.roomMenuOpen === r ? "sb-roomrow menu-open" : "sb-roomrow", null, btn,
       E("div", "sb-room-menuwrap", null,
         E("button", "sb-room-dots", { type: "button", "data-room-menu": r, "aria-label": "Room options for " + r }, "⋯")));
     if (S.roomMenuOpen === r) {
@@ -856,6 +876,85 @@ DASHBOARD_HTML = r"""<!doctype html>
     });
   }
 
+  /* ----------------------------------------------------------- invite picker */
+  /* An agent's access code binds its name to exactly one room, so "add an
+     existing agent to this room" is really "mint that same name a code here".
+     The picker lists names already known on the mesh but absent from this
+     room, so the common case is one click instead of a trip to the admin
+     panel. */
+  function knownAgentNames() {
+    var seen = {};
+    ((S.data && S.data.codes) || []).forEach(function (c) { seen[c.name] = 1; });
+    var peers = (S.data && S.data.peers) || {};
+    Object.keys(peers).forEach(function (room) {
+      peers[room].forEach(function (p) { seen[p.name] = 1; });
+    });
+    return Object.keys(seen).sort(function (a, b) { return a.localeCompare(b); });
+  }
+  function agentsNotInRoom(room) {
+    var here = {};
+    var peers = (S.data && S.data.peers) || {};
+    (peers[room] || []).forEach(function (p) { here[p.name] = 1; });
+    ((S.data && S.data.codes) || []).forEach(function (c) {
+      if (c.room === room) { here[c.name] = 1; }
+    });
+    return knownAgentNames().filter(function (n) { return !here[n]; });
+  }
+  function renderInvitePicker() {
+    var wrap = document.getElementById("ipWrap");
+    var scrim = document.getElementById("ipScrim");
+    if (!wrap || !scrim) { return; }
+    var open = !!S.invitePicker;
+    wrap.hidden = !open;
+    scrim.hidden = !open;
+    if (!open) { return; }
+    buildInvitePicker();
+  }
+  function buildInvitePicker() {
+    var wrap = document.getElementById("ipWrap");
+    var room = S.invitePicker.room;
+    var root = E("div", "ip-root", { id: "ipRoot", "data-testid": "invite-picker", "aria-label": "Invite an agent" });
+    root.appendChild(E("div", "ip-head", null,
+      E("span", null, { text: "Invite into #" + room }),
+      E("button", "ip-close", { type: "button", id: "ipClose", "aria-label": "Close invite" }, "×")));
+    if (S.invitePicker.result) {
+      var res = S.invitePicker.result;
+      root.appendChild(E("div", "ad-resultbox", null,
+        E("div", null, { text: res.name + " can join #" + res.room + " with:" }),
+        E("div", "ad-code", { text: res.code })));
+    } else {
+      var candidates = agentsNotInRoom(room);
+      if (candidates.length) {
+        var list = E("div", "ip-list", { "data-testid": "invite-candidates" });
+        candidates.forEach(function (n) {
+          list.appendChild(E("button", "ip-item", { type: "button", "data-invite-name": n },
+            avatar(n, "sm"), E("span", "ip-item__name", { text: n })));
+        });
+        root.appendChild(list);
+      } else {
+        root.appendChild(E("p", "ip-empty", null, "Every agent on the mesh is already in this room."));
+      }
+      root.appendChild(E("div", "ip-newrow", null,
+        E("input", "ip-field", { id: "ipNewName", autocomplete: "off", placeholder: "or a new agent name" }),
+        E("button", "ip-btn", { type: "button", id: "ipNewSubmit" }, "Invite")));
+    }
+    wrap.textContent = "";
+    wrap.appendChild(root);
+  }
+  function doInviteExisting(name) {
+    if (!S.invitePicker || S.invitePicker.pending) { return; }
+    S.invitePicker.pending = name;
+    api("/admin/invite", { name: name, room: S.invitePicker.room }).then(function (j) {
+      S.invitePicker.pending = null;
+      S.invitePicker.result = j;
+      renderInvitePicker();
+      return poll();
+    }).catch(function () {
+      S.invitePicker.pending = null;
+      renderInvitePicker();
+    });
+  }
+
   /* ------------------------------------------------------------ delete room */
   function deleteRoomRequest(room) {
     return api("/admin/delete-room", { room: room });
@@ -975,6 +1074,7 @@ DASHBOARD_HTML = r"""<!doctype html>
     }
     renderDrawer();
     renderCreateRoom();
+    renderInvitePicker();
     renderDeleteDialog();
     var navWrap = document.getElementById("navWrap");
     var navScrim = document.getElementById("navScrim");
@@ -1077,6 +1177,9 @@ DASHBOARD_HTML = r"""<!doctype html>
     root.appendChild(E("button", "crp-scrim", { id: "crScrim", type: "button", "aria-label": "Close create room", hidden: true }));
     root.appendChild(E("div", "crp-wrap", { id: "crWrap", hidden: true }));
 
+    root.appendChild(E("button", "ip-scrim", { id: "ipScrim", type: "button", "aria-label": "Close invite", hidden: true }));
+    root.appendChild(E("div", "ip-wrap", { id: "ipWrap", hidden: true }));
+
     root.appendChild(E("button", "drd-scrim", { id: "drdScrim", type: "button", "aria-label": "Cancel delete room", hidden: true }));
     root.appendChild(E("div", "drd-wrap", { id: "drdWrap", hidden: true }));
 
@@ -1112,6 +1215,14 @@ DASHBOARD_HTML = r"""<!doctype html>
   }
   function wire() {
     document.addEventListener("click", function (ev) {
+      /* Dismiss an open room menu on any click that isn't inside it or on its
+         own ⋯ trigger — otherwise the menu outlives the row's hover state and
+         strands the sidebar in a half-highlighted limbo. */
+      if (S.roomMenuOpen && ev.target.closest &&
+          !ev.target.closest(".sb-room-menu") && !ev.target.closest("[data-room-menu]")) {
+        S.roomMenuOpen = null;
+        renderSidebar();
+      }
       var t = ev.target.closest ? ev.target.closest("button,[data-room],[data-agent]") : null;
       if (!t) { return; }
       var id = t.id;
@@ -1139,6 +1250,10 @@ DASHBOARD_HTML = r"""<!doctype html>
       if (t.hasAttribute("data-restore-room")) {
         restoreRoom(t.getAttribute("data-restore-room"));
         renderSidebar();
+        return;
+      }
+      if (t.hasAttribute("data-invite-name")) {
+        doInviteExisting(t.getAttribute("data-invite-name"));
         return;
       }
       if (t.hasAttribute("data-delete-room")) {
@@ -1194,10 +1309,18 @@ DASHBOARD_HTML = r"""<!doctype html>
         case "navScrim": S.navOpen = false; renderAll(); break;
         case "openDrawer": S.drawerOpen = true; renderDrawer(); break;
         case "convInviteBtn":
-          S.inviteRoomHint = S.view.room;
-          S.drawerOpen = true;
-          renderDrawer();
+          S.invitePicker = { room: S.view.room, pending: null, result: null };
+          renderInvitePicker();
           break;
+        case "ipClose": case "ipScrim":
+          S.invitePicker = null;
+          renderInvitePicker();
+          break;
+        case "ipNewSubmit": {
+          var newName = (document.getElementById("ipNewName") || {}).value || "";
+          if (newName.trim()) { doInviteExisting(newName.trim()); }
+          break;
+        }
         case "adClose": case "drawerScrim": S.drawerOpen = false; renderDrawer(); break;
         case "recentToggle": S.recentOpen = !S.recentOpen; renderSidebar(); break;
         case "archivedToggle": S.archivedOpen = !S.archivedOpen; renderSidebar(); break;

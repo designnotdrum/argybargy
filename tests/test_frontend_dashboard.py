@@ -219,10 +219,31 @@ def test_expects_pill_cycles(dash):
     assert pill.inner_text().endswith("—")
 
 
-def test_invite_action_opens_the_drawer_with_the_room_preselected(dash, seeded):
+def test_invite_action_offers_agents_from_other_rooms_not_the_admin_panel(dash, client, admin_headers, seeded):
+    # An agent that exists on the mesh but is not in the room being viewed.
+    client.post("/admin/invite", headers=admin_headers, json={"name": "elsewhere-bot", "room": "someotherroom"})
+    dash.wait_for_timeout(3500)
+
     dash.click("#convInviteBtn")
-    dash.wait_for_selector("#adRoot")
-    assert dash.locator("#adRoom").input_value() == seeded["room"]
+    dash.wait_for_selector('[data-testid="invite-picker"]')
+    # The admin drawer must NOT be what opens.
+    assert dash.locator("#adRoot").count() == 0
+
+    candidates = dash.locator('[data-testid="invite-candidates"]')
+    assert candidates.locator('[data-invite-name="elsewhere-bot"]').count() == 1
+
+    dash.click('[data-invite-name="elsewhere-bot"]')
+    dash.wait_for_selector(".ad-resultbox", timeout=10000)
+
+    codes = client.get("/admin/state", headers=admin_headers).json()["codes"]
+    assert any(c["name"] == "elsewhere-bot" and c["room"] == seeded["room"] for c in codes)
+
+
+def test_invite_picker_excludes_agents_already_in_the_room(dash, seeded):
+    dash.click("#convInviteBtn")
+    dash.wait_for_selector('[data-testid="invite-picker"]')
+    for name in seeded["codes"]:
+        assert dash.locator(f'[data-invite-name="{name}"]').count() == 0
 
 
 def test_theme_toggle_applies_and_persists(dash, live_server):
