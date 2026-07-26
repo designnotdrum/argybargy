@@ -74,10 +74,8 @@ DASHBOARD_HTML = r"""<!doctype html>
 .drd-btn.danger{border-color:var(--red);color:var(--red)}
 .drd-btn:disabled{opacity:.5;cursor:not-allowed}
 .drd-errorbox{margin-top:8px;padding:6px 8px;border:1px solid var(--red-dim);border-radius:6px;background:var(--red-dim);color:var(--red);font-size:11px}
-.sb-rooms-empty{padding:10px 16px}
-.sb-rooms-empty__text{margin:0 0 8px;color:var(--muted);font-size:12px}
-.sb-rooms-empty__cta{display:flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid var(--border-strong);border-radius:6px;background:var(--raised);color:var(--text);font-size:12px;cursor:pointer}
-.sb-rooms-empty__cta:hover{border-color:var(--green);color:var(--green)}
+.sb-rooms-empty{padding:6px 16px 10px}
+.sb-rooms-empty__text{margin:0;color:var(--faint);font-size:12px}
 .conv-noroom{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:8px;padding:24px;text-align:center}
 .conv-noroom__title{margin:0;color:var(--text);font-size:14px;font-weight:600}
 .conv-noroom__body{margin:0 0 8px;color:var(--muted);font-size:12px}
@@ -421,9 +419,11 @@ DASHBOARD_HTML = r"""<!doctype html>
       E("button", "sb-iconbtn-sm", { type: "button", id: "openCreateRoom", "aria-label": "Create room", title: "Create room" }, "+")));
     var allRooms = roomList();
     if (allRooms.length === 0) {
+      /* No CTA button here — the "+" in the Rooms header directly above is
+         already the create affordance, and the conversation pane carries the
+         primary call to action. */
       out.appendChild(E("div", "sb-rooms-empty", null,
-        E("p", "sb-rooms-empty__text", null, "No rooms yet"),
-        E("button", "sb-rooms-empty__cta", { type: "button", id: "sbEmptyCreateRoom" }, "+ Create room")));
+        E("p", "sb-rooms-empty__text", null, "No rooms yet")));
     } else {
       var visibleRooms = allRooms.filter(function (r) { return !S.archivedRooms[r]; });
       var archivedRoomsList = allRooms.filter(function (r) { return S.archivedRooms[r]; });
@@ -1193,7 +1193,7 @@ DASHBOARD_HTML = r"""<!doctype html>
 
       switch (id) {
         case "navOpen": S.navOpen = true; renderAll(); break;
-        case "openCreateRoom": case "sbEmptyCreateRoom": case "convNoRoomCreate":
+        case "openCreateRoom": case "convNoRoomCreate":
           S.createRoom = { open: true, pending: false };
           renderCreateRoom();
           break;
