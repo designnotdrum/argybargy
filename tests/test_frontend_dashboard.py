@@ -30,12 +30,12 @@ def test_page_has_no_dynamic_code_execution():
     assert "new Function" not in DASHBOARD_HTML
 
 
-def test_page_only_talks_to_the_five_admin_endpoints():
+def test_page_only_talks_to_the_six_admin_endpoints():
     called = set(re.findall(r'fetch\(\s*"(/[^"]*)"', DASHBOARD_HTML))
     called |= set(re.findall(r'api\(\s*"(/[^"]*)"', DASHBOARD_HTML))
     assert called == {
         "/admin/state", "/admin/say", "/admin/invite",
-        "/admin/revoke", "/admin/regenerate-token",
+        "/admin/revoke", "/admin/regenerate-token", "/admin/delete-room",
     }, called
 
 
@@ -153,6 +153,13 @@ def test_dedupe_donates_status_from_the_freshest_sighting(dash):
        status:'working',statusNote:'reviewing PR #2'}
     ]).map(function(x){return [x.status,x.statusNote]})[0]""")
     assert result == ["working", "reviewing PR #2"]
+@pytest.mark.parametrize("name,expected", [
+    ("build", True), ("room-42_v2", True), ("  build  ", True),
+    ("", False), ("   ", False), ("Build", False),
+    ("room name", False), ("a" * 64, True), ("a" * 65, False),
+])
+def test_room_name_validation(dash, name, expected):
+    assert dash.evaluate(f"window.__argy.isValidRoomName({name!r})") is expected
 
 
 # ============================================================ rendering
@@ -252,6 +259,12 @@ def test_expects_pill_cycles(dash):
     assert pill.inner_text().endswith("—")
 
 
+def test_invite_action_opens_the_drawer_with_the_room_preselected(dash, seeded):
+    dash.click("#convInviteBtn")
+    dash.wait_for_selector("#adRoot")
+    assert dash.locator("#adRoom").input_value() == seeded["room"]
+
+
 def test_theme_toggle_applies_and_persists(dash, live_server):
     dash.click("#theme-light")
     assert dash.evaluate("document.documentElement.getAttribute('data-theme')") == "light"
@@ -272,6 +285,88 @@ def test_operator_can_send_a_message_to_the_room(dash, client, admin_headers, se
     sent = [m for m in msgs if m["text"] == "operator says hello" and m["room"] == seeded["room"]]
     assert sent, "message should have reached the relay"
     assert sent[0]["from"] == "operator"
+
+
+def test_archiving_a_room_moves_it_into_the_archived_disclosure_and_back(dash, client, admin_headers):
+    client.post("/admin/invite", headers=admin_headers, json={"name": "archivee", "room": "archiveroom"})
+    # Wait for the next poll to surface the room rather than sleeping a fixed
+    # interval — under full-suite load a bare 3.5s wait races the 3s poll.
+    dash.wait_for_selector('[data-room="archiveroom"]', timeout=15000)
+
+    # The ⋯ trigger is revealed on row hover, so hover before clicking it —
+    # without this Playwright fails actionability on a display:none element.
+    dash.hover('[data-room="archiveroom"]')
+    dash.click('[data-room-menu="archiveroom"]')
+    dash.click('[data-archive-room="archiveroom"]')
+
+    room_list = dash.locator('[data-testid="room-list"]')
+    assert room_list.locator('[data-room="archiveroom"]').count() == 0
+
+    archived_toggle = dash.locator("#archivedToggle")
+    assert archived_toggle.is_visible()
+    dash.click("#archivedToggle")
+    archived_list = dash.locator('[data-testid="archived-room-list"]')
+    assert archived_list.locator('[data-room="archiveroom"]').count() == 1
+
+    dash.click('[aria-label="Restore archiveroom"]')
+    assert room_list.locator('[data-room="archiveroom"]').count() == 1
+
+
+def test_delete_room_requires_typing_the_exact_room_name_to_confirm(dash, client, admin_headers):
+    client.post("/admin/invite", headers=admin_headers, json={"name": "condemned", "room": "condemned-room"})
+    dash.wait_for_selector('[data-room="condemned-room"]', timeout=15000)
+
+    dash.hover('[data-room="condemned-room"]')
+    dash.click('[data-room-menu="condemned-room"]')
+    dash.click('[data-delete-room="condemned-room"]')
+
+    dialog = dash.locator('[data-testid="delete-room-dialog"]')
+    assert dialog.is_visible()
+    confirm = dash.locator("#drdConfirm")
+    assert confirm.is_disabled()
+
+    dash.fill("#drdConfirmInput", "wrong-name")
+    assert confirm.is_disabled()
+
+    dash.fill("#drdConfirmInput", "condemned-room")
+    assert confirm.is_enabled()
+
+    confirm.click()
+    dash.wait_for_selector('[data-testid="delete-room-dialog"]', state="detached", timeout=15000)
+
+    state = client.get("/admin/state", headers=admin_headers).json()
+    assert all(c["room"] != "condemned-room" for c in state["codes"])
+
+
+def test_delete_room_dialog_can_be_cancelled(dash, client, admin_headers):
+    client.post("/admin/invite", headers=admin_headers, json={"name": "spared", "room": "spared-room"})
+    dash.wait_for_selector('[data-room="spared-room"]', timeout=15000)
+
+    dash.hover('[data-room="spared-room"]')
+    dash.click('[data-room-menu="spared-room"]')
+    dash.click('[data-delete-room="spared-room"]')
+    dash.wait_for_selector('[data-testid="delete-room-dialog"]')
+    dash.click("#drdCancel")
+    assert dash.locator('[data-testid="delete-room-dialog"]').count() == 0
+
+    state = client.get("/admin/state", headers=admin_headers).json()
+    assert any(c["room"] == "spared-room" for c in state["codes"]), "cancel must not delete anything"
+
+
+def test_sidebar_and_conversation_pane_show_a_create_room_cta_with_zero_rooms(page, live_server, admin_headers):
+    token = admin_headers["X-Admin-Token"]
+    page.add_init_script(f"localStorage.setItem('cc_admin', {token!r});")
+    page.goto(f"{live_server}/dashboard")
+    page.wait_for_selector(".sb-root")
+    page.evaluate("""() => window.__setState({
+        codes: [], hash_codes: false, messages: [], peers: {}, public_url: 'u'
+    })""")
+
+    assert "No rooms yet" in page.locator('[data-testid="sidebar"]').inner_text()
+    assert "No rooms yet" in page.locator('[data-testid="conversation-pane"]').inner_text()
+
+    page.click("#sbEmptyCreateRoom")
+    page.wait_for_selector("#crRoot")
 
 
 def test_mobile_viewport_collapses_the_sidebar_into_a_drawer(dash):
@@ -314,6 +409,34 @@ def test_drawer_shows_public_url_and_key_count(dash, client, admin_headers):
     assert dash.locator("#adUrl").inner_text().startswith("http")
     expected = len(client.get("/admin/state", headers=admin_headers).json()["codes"])
     assert dash.locator("#adKeyCount").inner_text().strip() == f"· {expected}"
+
+
+def test_sidebar_plus_creates_a_room_and_shows_the_mint_result(dash, client, admin_headers):
+    dash.click("#openCreateRoom")
+    dash.wait_for_selector("#crRoot")
+    submit = dash.locator("#crSubmit")
+    assert submit.is_disabled()
+
+    dash.fill("#crRoom", "launchpad")
+    assert submit.is_disabled(), "still needs an agent name"
+    dash.fill("#crName", "scout")
+    assert submit.is_enabled()
+
+    submit.click()
+    dash.wait_for_selector("#crOut .ad-resultbox", timeout=10000)
+
+    codes = client.get("/admin/state", headers=admin_headers).json()["codes"]
+    minted = [c for c in codes if c["name"] == "scout" and c["room"] == "launchpad"]
+    assert minted, "mint should have created launchpad"
+
+
+def test_create_room_warns_but_does_not_block_on_a_duplicate_name(dash, seeded):
+    dash.click("#openCreateRoom")
+    dash.wait_for_selector("#crRoot")
+    dash.fill("#crRoom", seeded["room"])
+    assert "already exists" in dash.locator("#crHint").inner_text()
+    dash.fill("#crName", "another-agent")
+    assert dash.locator("#crSubmit").is_enabled(), "duplicate name warns, does not block"
 
 
 def test_bad_token_surfaces_an_error_state(page, live_server):

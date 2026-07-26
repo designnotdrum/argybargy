@@ -12,6 +12,7 @@ ADMIN_POSTS = [
     ("/admin/revoke", {"target": "x"}),
     ("/admin/say", {"text": "x"}),
     ("/admin/regenerate-token", {}),
+    ("/admin/delete-room", {"room": "x"}),
 ]
 
 
@@ -98,6 +99,27 @@ def test_revoke_clears_status_so_a_reissued_name_starts_clean(client, admin_head
     me = client.get("/whoami", headers=new_auth).json()
     assert me["status"] is None and me["status_note"] is None
     client.post("/admin/revoke", headers=admin_headers, json={"target": "reincarnate"})
+def test_admin_delete_room_removes_messages_and_codes(client, admin_headers):
+    r = client.post("/admin/invite", headers=admin_headers, json={"name": "doomed", "room": "delroom"})
+    code = r.json()["code"]
+    auth = {"Authorization": f"Bearer {code}"}
+    assert client.get("/whoami", headers=auth).status_code == 200
+    client.post("/messages", headers=auth, json={"to": "all", "text": "last words"})
+
+    resp = client.post("/admin/delete-room", headers=admin_headers, json={"room": "delroom"})
+    assert resp.status_code == 200
+    assert resp.json() == {"room": "delroom", "deleted_messages": 1, "deleted_codes": 1}
+
+    state = client.get("/admin/state", headers=admin_headers).json()
+    assert all(c["room"] != "delroom" for c in state["codes"])
+    assert all(m["room"] != "delroom" for m in state["messages"])
+    assert client.get("/whoami", headers=auth).status_code == 401
+
+
+def test_admin_delete_room_unknown_room_is_zero_not_error(client, admin_headers):
+    r = client.post("/admin/delete-room", headers=admin_headers, json={"room": "never-existed-room"})
+    assert r.status_code == 200
+    assert r.json() == {"room": "never-existed-room", "deleted_messages": 0, "deleted_codes": 0}
 
 
 # ------------------------------------------------------------------- state
@@ -168,6 +190,13 @@ def test_audit_records_failed_admin_auth(client, admin_headers):
 def test_audit_limit_is_honoured(client, admin_headers):
     events = client.get("/admin/audit?limit=1", headers=admin_headers).json()["events"]
     assert len(events) <= 1
+
+
+def test_admin_delete_room_audit_logged(client, admin_headers):
+    client.post("/admin/invite", headers=admin_headers, json={"name": "auditvictim", "room": "delroom-audit"})
+    client.post("/admin/delete-room", headers=admin_headers, json={"room": "delroom-audit"})
+    events = client.get("/admin/audit", headers=admin_headers).json()["events"]
+    assert any(e["action"] == "delete_room" and e["room"] == "delroom-audit" for e in events)
 
 
 # ------------------------------------------------------- admin token on disk

@@ -165,6 +165,10 @@ class RevokeBody(BaseModel):
     target: str = Field(..., min_length=1, description="Peer name or full code to revoke.")
 
 
+class DeleteRoomBody(BaseModel):
+    room: str = Field(..., min_length=1, max_length=64)
+
+
 class SayBody(BaseModel):
     text: str = Field(..., min_length=1, max_length=settings.max_text_len)
     to: str = Field(default="all")
@@ -437,6 +441,16 @@ async def admin_revoke(body: RevokeBody, _: None = Depends(require_admin)) -> di
         hub.clear_status(room, name)
     audit.log("revoke", actor="admin", detail=f"{body.target} ({n})")
     return {"revoked": n}
+
+
+@app.post("/admin/delete-room")
+async def admin_delete_room(body: DeleteRoomBody, _: None = Depends(require_admin)) -> dict:
+    deleted_messages = message_store.delete_room(body.room)
+    deleted_codes = code_store.delete_room(body.room)
+    hub.drop_room(body.room)
+    audit.log("delete_room", actor="admin", room=body.room,
+               detail=f"messages={deleted_messages} codes={deleted_codes}")
+    return {"room": body.room, "deleted_messages": deleted_messages, "deleted_codes": deleted_codes}
 
 
 @app.post("/admin/say")

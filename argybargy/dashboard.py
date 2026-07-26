@@ -34,6 +34,54 @@ DASHBOARD_HTML = r"""<!doctype html>
 .sb-arow{max-height:52px}
 .sb-atext{display:flex;flex-direction:column;gap:1px;min-width:0;flex:1}
 .sb-astatus{overflow:hidden;font-size:11px;color:var(--faint);text-overflow:ellipsis;white-space:nowrap}
+.sb-label-row{display:flex;align-items:center;justify-content:space-between;padding-right:10px}
+.sb-iconbtn-sm{display:flex;align-items:center;justify-content:center;width:20px;height:20px;padding:0;border:none;border-radius:5px;background:transparent;color:var(--faint);cursor:pointer;font-size:14px;line-height:1}
+.sb-iconbtn-sm:hover{color:var(--text);background:var(--raised)}
+.crp-scrim{position:fixed;inset:0;z-index:45;border:none;background:var(--scrim);cursor:default}
+.crp-wrap{position:fixed;top:52px;left:16px;z-index:46}
+.crp-root{width:min(320px,calc(100vw - 32px));padding:12px;border:1px solid var(--border-strong);border-radius:10px;background:var(--surface);color:var(--text);box-shadow:var(--pop-shadow)}
+.crp-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;font-weight:600;font-size:12px}
+.crp-close{border:none;background:transparent;color:var(--muted);cursor:pointer;font-size:16px;line-height:1}
+.crp-frow{display:flex;gap:6px;margin-bottom:6px}
+.crp-field{flex:1;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--raised);color:var(--text);font-size:12px}
+.crp-hint{margin:0 0 6px;color:var(--amber);font-size:11px;min-height:1em}
+.crp-actrow{display:flex;justify-content:flex-end}
+.crp-btn{padding:6px 10px;border:1px solid var(--border-strong);border-radius:6px;background:var(--raised);color:var(--text);font-size:12px;cursor:pointer}
+.crp-btn.primary{border-color:var(--green);color:var(--green)}
+.crp-btn:disabled{opacity:.5;cursor:not-allowed}
+.conv-header__invite{display:flex;align-items:center;gap:4px;padding:3px 8px;margin-left:8px;border:1px solid var(--border-strong);border-radius:6px;background:transparent;color:var(--muted);font-size:11px;cursor:pointer}
+.conv-header__invite:hover{color:var(--text);border-color:var(--text)}
+.sb-roomrow{position:relative;display:flex;align-items:center}
+.sb-roomrow .sb-room{flex:1}
+.sb-room-menuwrap{position:relative}
+.sb-room-dots{display:none;align-items:center;justify-content:center;width:20px;height:20px;padding:0;margin-right:6px;border:none;border-radius:5px;background:transparent;color:var(--faint);cursor:pointer;font-size:13px;line-height:1}
+.sb-roomrow:hover .sb-room-dots{display:flex}
+.sb-room-menu{position:absolute;top:100%;right:6px;z-index:20;min-width:140px;padding:4px;border:1px solid var(--border-strong);border-radius:8px;background:var(--raised);box-shadow:var(--pop-shadow)}
+.sb-room-menuitem{display:block;width:100%;padding:6px 8px;border:none;border-radius:5px;background:transparent;color:var(--text);font-size:12px;text-align:left;cursor:pointer}
+.sb-room-menuitem:hover{background:var(--bg)}
+.sb-room-menuitem--danger{color:var(--red)}
+.sb-room-restore{margin-right:6px;padding:3px 8px;border:1px solid var(--border-strong);border-radius:6px;background:transparent;color:var(--muted);font-size:11px;cursor:pointer}
+.sb-room-restore:hover{color:var(--text);border-color:var(--text)}
+.drd-scrim{position:fixed;inset:0;z-index:55;border:none;background:var(--scrim);cursor:default}
+.drd-wrap{position:fixed;top:50%;left:50%;z-index:56;transform:translate(-50%,-50%)}
+.drd-root{width:min(360px,calc(100vw - 32px));padding:16px;border:1px solid var(--border-strong);border-radius:10px;background:var(--surface);color:var(--text);box-shadow:var(--pop-shadow)}
+.drd-title{margin:0 0 8px;font-size:14px;font-weight:600}
+.drd-copy{margin:0 0 12px;color:var(--muted);font-size:12px;line-height:1.5}
+.drd-label{display:block;margin-bottom:4px;font-size:11px;color:var(--muted)}
+.drd-field{box-sizing:border-box;width:100%;padding:6px 8px;margin-bottom:12px;border:1px solid var(--border);border-radius:6px;background:var(--raised);color:var(--text);font-size:12px}
+.drd-actrow{display:flex;justify-content:flex-end;gap:8px}
+.drd-btn{padding:6px 12px;border:1px solid var(--border-strong);border-radius:6px;background:var(--raised);color:var(--text);font-size:12px;cursor:pointer}
+.drd-btn.danger{border-color:var(--red);color:var(--red)}
+.drd-btn:disabled{opacity:.5;cursor:not-allowed}
+.drd-errorbox{margin-top:8px;padding:6px 8px;border:1px solid var(--red-dim);border-radius:6px;background:var(--red-dim);color:var(--red);font-size:11px}
+.sb-rooms-empty{padding:10px 16px}
+.sb-rooms-empty__text{margin:0 0 8px;color:var(--muted);font-size:12px}
+.sb-rooms-empty__cta{display:flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid var(--border-strong);border-radius:6px;background:var(--raised);color:var(--text);font-size:12px;cursor:pointer}
+.sb-rooms-empty__cta:hover{border-color:var(--green);color:var(--green)}
+.conv-noroom{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:8px;padding:24px;text-align:center}
+.conv-noroom__title{margin:0;color:var(--text);font-size:14px;font-weight:600}
+.conv-noroom__body{margin:0 0 8px;color:var(--muted);font-size:12px}
+.conv-noroom__cta{display:flex;align-items:center;gap:6px;padding:7px 14px;border:1px solid var(--border-strong);border-radius:8px;background:var(--raised);color:var(--text);font-size:12px;cursor:pointer;margin:0 auto}
 </style>
 </head>
 <body>
@@ -62,6 +110,7 @@ DASHBOARD_HTML = r"""<!doctype html>
 
   var TOKEN_KEY = "cc_admin";
   var THEME_KEY = "cc_theme";
+  var ARCHIVE_KEY = "cc_archived_rooms";
   var POLL_MS = 3000;
   var FADE_MS = 8000;
   var BOTTOM_SLOP_PX = 32;
@@ -76,10 +125,15 @@ DASHBOARD_HTML = r"""<!doctype html>
     data: null,               /* last /admin/state payload */
     conn: "idle",             /* idle | live | error */
     view: { kind: "room", room: "", agent: null },
+    inviteRoomHint: null,
     agents: [],               /* reconciled presence */
     now: Date.now(),
     stick: true,              /* timeline pinned to bottom */
     recentOpen: false,
+    archivedRooms: loadArchivedRooms(),
+    archivedOpen: false,
+    roomMenuOpen: null,
+    deleteRoom: null,
     navOpen: false,
     drawerOpen: false,
     menuOpen: false,
@@ -93,7 +147,8 @@ DASHBOARD_HTML = r"""<!doctype html>
     copied: {},               /* transient "copied!" flags */
     confirmKill: {},
     mint: { result: null, error: null, pending: false },
-    regen: { armed: false, result: null, error: null, pending: false }
+    regen: { armed: false, result: null, error: null, pending: false },
+    createRoom: { open: false, pending: false }
   };
 
   /* ----------------------------------------------------------- dom helpers */
@@ -189,6 +244,15 @@ DASHBOARD_HTML = r"""<!doctype html>
     var total = Math.max(0, Math.floor((now - ms) / 1000));
     return Math.floor(total / 60) + ":" + String(total % 60).padStart(2, "0");
   }
+  /* Client-side room-name charset — stricter than the server, which only
+     enforces min_length=1, max_length=64 (InviteBody.room / DeleteRoomBody
+     in argybargy/app.py) with no character restriction. Room names render
+     as plain text in a fixed-width sidebar list, so whitespace-only, emoji,
+     or control characters would render badly or collide visually there. */
+  var ROOM_NAME_RE = /^[a-z0-9_-]{1,64}$/;
+  function isValidRoomName(name) {
+    return ROOM_NAME_RE.test((name || "").trim());
+  }
   function reconcile(data) {
     var prev = {};
     S.agents.forEach(function (a) { prev[a.room + "/" + a.name] = a; });
@@ -236,6 +300,28 @@ DASHBOARD_HTML = r"""<!doctype html>
     Object.keys(S.data.peers || {}).forEach(function (r) { set[r] = 1; });
     (S.data.codes || []).forEach(function (c) { set[c.room] = 1; });
     return Object.keys(set).sort(function (a, b) { return a.localeCompare(b); });
+  }
+  function loadArchivedRooms() {
+    try {
+      var arr = JSON.parse(localStorage.getItem(ARCHIVE_KEY) || "[]");
+      var out = {};
+      arr.forEach(function (r) { out[r] = true; });
+      return out;
+    } catch (e) { return {}; }
+  }
+  function persistArchivedRooms() {
+    localStorage.setItem(ARCHIVE_KEY, JSON.stringify(Object.keys(S.archivedRooms)));
+  }
+  /* Per-browser, never touches the relay — the server has no concept of
+     "archived". New activity never auto-resurfaces an archived room; only
+     restoreRoom() moves it back to the top-level list. */
+  function archiveRoom(room) {
+    S.archivedRooms[room] = true;
+    persistArchivedRooms();
+  }
+  function restoreRoom(room) {
+    delete S.archivedRooms[room];
+    persistArchivedRooms();
   }
   function messagesFor() {
     if (!S.data) { return []; }
@@ -330,15 +416,31 @@ DASHBOARD_HTML = r"""<!doctype html>
     var onlineCount = roster.filter(function (r) { return r.life === "online"; }).length;
 
     var out = document.createDocumentFragment();
-    out.appendChild(E("div", "sb-label", null, "Rooms"));
-    var rl = E("div", null, { "data-testid": "room-list" });
-    roomList().forEach(function (r) {
-      var active = S.view.kind === "room" && S.view.room === r;
-      rl.appendChild(E("button", active ? "sb-room active" : "sb-room",
-        { type: "button", "data-room": r, "aria-label": "Room " + r, "aria-current": active ? "true" : null },
-        icon("hash", 14, "sb-ph"), E("span", null, { text: r })));
-    });
-    out.appendChild(rl);
+    out.appendChild(E("div", "sb-label sb-label-row", null,
+      E("span", null, null, "Rooms"),
+      E("button", "sb-iconbtn-sm", { type: "button", id: "openCreateRoom", "aria-label": "Create room", title: "Create room" }, "+")));
+    var allRooms = roomList();
+    if (allRooms.length === 0) {
+      out.appendChild(E("div", "sb-rooms-empty", null,
+        E("p", "sb-rooms-empty__text", null, "No rooms yet"),
+        E("button", "sb-rooms-empty__cta", { type: "button", id: "sbEmptyCreateRoom" }, "+ Create room")));
+    } else {
+      var visibleRooms = allRooms.filter(function (r) { return !S.archivedRooms[r]; });
+      var archivedRoomsList = allRooms.filter(function (r) { return S.archivedRooms[r]; });
+      var rl = E("div", null, { "data-testid": "room-list" });
+      visibleRooms.forEach(function (r) { rl.appendChild(roomRow(r, false)); });
+      out.appendChild(rl);
+      if (archivedRoomsList.length) {
+        out.appendChild(E("button", S.archivedOpen ? "sb-recent-head open" : "sb-recent-head",
+          { type: "button", id: "archivedToggle", "aria-expanded": S.archivedOpen ? "true" : "false" },
+          icon("caretRight", 12, "sb-ph"), " Archived · " + archivedRoomsList.length));
+        if (S.archivedOpen) {
+          var al2 = E("div", null, { "data-testid": "archived-room-list" });
+          archivedRoomsList.forEach(function (r) { al2.appendChild(roomRow(r, true)); });
+          out.appendChild(al2);
+        }
+      }
+    }
 
     out.appendChild(E("div", "sb-label", null, "Agents ",
       E("span", "sb-n", { text: "· " + onlineCount })));
@@ -399,6 +501,27 @@ DASHBOARD_HTML = r"""<!doctype html>
     return b;
   }
 
+  function roomRow(r, archived) {
+    var active = S.view.kind === "room" && S.view.room === r;
+    var btn = E("button", active ? "sb-room active" : "sb-room",
+      { type: "button", "data-room": r, "aria-label": "Room " + r, "aria-current": active ? "true" : null },
+      icon("hash", 14, "sb-ph"), E("span", null, { text: r }));
+    if (archived) {
+      return E("div", "sb-roomrow", null, btn,
+        E("button", "sb-room-restore", { type: "button", "data-restore-room": r, "aria-label": "Restore " + r }, "Restore"));
+    }
+    var wrap = E("div", "sb-roomrow", null, btn,
+      E("div", "sb-room-menuwrap", null,
+        E("button", "sb-room-dots", { type: "button", "data-room-menu": r, "aria-label": "Room options for " + r }, "⋯")));
+    if (S.roomMenuOpen === r) {
+      var menu = E("div", "sb-room-menu", { "data-testid": "room-menu-" + r },
+        E("button", "sb-room-menuitem", { type: "button", "data-archive-room": r }, "Archive"),
+        E("button", "sb-room-menuitem sb-room-menuitem--danger", { type: "button", "data-delete-room": r }, "Delete room…"));
+      wrap.lastChild.appendChild(menu);
+    }
+    return wrap;
+  }
+
   /* ---------------------------------------------------------------- header */
   function renderHeader() {
     var h = document.getElementById("convHeader");
@@ -429,6 +552,10 @@ DASHBOARD_HTML = r"""<!doctype html>
     h.appendChild(E("span", "conv-header__meta", null,
       icon("usersThree", 13, "ph"), E("span", null, { text: String(present) }),
       E("span", "conv-header__plabel", null, " present")));
+    h.appendChild(E("button", "conv-header__invite", {
+      type: "button", id: "convInviteBtn",
+      "aria-label": "Invite an agent into #" + S.view.room, title: "Invite an agent into this room"
+    }, "+ Invite"));
     var chip = turnChip(latestTurn());
     if (chip) { h.appendChild(chip); }
   }
@@ -552,6 +679,11 @@ DASHBOARD_HTML = r"""<!doctype html>
     renderKeys();
     var u = document.getElementById("adUrl");
     if (u) { u.textContent = (S.data && S.data.public_url) || ""; }
+    if (S.inviteRoomHint) {
+      var roomSel = document.getElementById("adRoom");
+      if (roomSel && roomList().indexOf(S.inviteRoomHint) >= 0) { roomSel.value = S.inviteRoomHint; }
+      S.inviteRoomHint = null;
+    }
   }
   function buildDrawer() {
     var wrap = document.getElementById("drawerWrap");
@@ -670,6 +802,153 @@ DASHBOARD_HTML = r"""<!doctype html>
     });
   }
 
+  /* ------------------------------------------------------------ create room */
+  function renderCreateRoom() {
+    var wrap = document.getElementById("crWrap");
+    var scrim = document.getElementById("crScrim");
+    if (!wrap || !scrim) { return; }
+    wrap.hidden = !S.createRoom.open;
+    scrim.hidden = !S.createRoom.open;
+    if (!S.createRoom.open) { return; }
+    if (!document.getElementById("crRoot")) { buildCreateRoom(); }
+    refreshCreateRoomHint();
+  }
+  function refreshCreateRoomHint() {
+    var hint = document.getElementById("crHint");
+    var roomInput = document.getElementById("crRoom");
+    var nameInput = document.getElementById("crName");
+    var submit = document.getElementById("crSubmit");
+    if (!hint || !roomInput || !nameInput || !submit) { return; }
+    var room = roomInput.value.trim();
+    var valid = isValidRoomName(room);
+    var exists = valid && roomList().indexOf(room) >= 0;
+    hint.textContent = exists ? ("#" + room + " already exists — this adds an agent to that room") : "";
+    submit.disabled = !(valid && nameInput.value.trim()) || S.createRoom.pending;
+  }
+  function buildCreateRoom() {
+    var wrap = document.getElementById("crWrap");
+    var root = E("div", "crp-root", { id: "crRoot", "aria-label": "Create room", "data-testid": "create-room-popover" });
+    root.appendChild(E("header", "crp-head", null,
+      E("span", null, null, "Create room"),
+      E("button", "crp-close", { type: "button", id: "crClose", "aria-label": "Close create room" }, "×")));
+    root.appendChild(E("div", "crp-frow", null,
+      E("input", "crp-field", { id: "crRoom", autocomplete: "off", placeholder: "room name", "aria-label": "Room name" })));
+    root.appendChild(E("p", "crp-hint", { id: "crHint" }));
+    root.appendChild(E("div", "crp-frow", null,
+      E("input", "crp-field", { id: "crName", autocomplete: "off", placeholder: "first agent name", "aria-label": "First agent name" })));
+    var expSel = E("select", "crp-field", { id: "crExpiry", "aria-label": "Expiry" });
+    EXPIRY_OPTIONS.forEach(function (o) { expSel.appendChild(E("option", null, { value: o[0], text: o[1] })); });
+    root.appendChild(E("div", "crp-frow", null, expSel,
+      E("input", "crp-field", { id: "crCap", autocomplete: "off", placeholder: "capabilities (optional)", "aria-label": "Capabilities" })));
+    root.appendChild(E("div", "crp-actrow", null,
+      E("button", "crp-btn primary", { type: "button", id: "crSubmit", disabled: true }, "Create room")));
+    root.appendChild(E("div", null, { id: "crOut" }));
+    wrap.textContent = "";
+    wrap.appendChild(root);
+  }
+  function doCreateRoom() {
+    var roomInput = document.getElementById("crRoom");
+    var nameInput = document.getElementById("crName");
+    var room = roomInput.value.trim();
+    var name = nameInput.value.trim();
+    if (!isValidRoomName(room) || !name || S.createRoom.pending) { return; }
+    var out = document.getElementById("crOut");
+    S.createRoom.pending = true;
+    refreshCreateRoomHint();
+    api("/admin/invite", {
+      name: name, room: room,
+      expires: document.getElementById("crExpiry").value,
+      capabilities: document.getElementById("crCap").value.trim() || null
+    }).then(function (r) {
+      S.createRoom.pending = false;
+      out.textContent = "";
+      out.appendChild(E("div", "ad-resultbox", null,
+        "Key for ", E("b", null, { text: r.name || name }), " in ",
+        E("b", null, { text: "#" + (r.room || room) }),
+        E("div", "ad-code", { text: r.code }),
+        E("div", null, { style: "margin-top:7px" },
+          E("button", "ad-btn", { type: "button", "data-copykey": r.code, "aria-label": "created" },
+            icon("copy", 12), " Copy code")),
+        E("p", "ad-hint", null, "Copy it now — with hashing on it will not be shown again.")));
+      return poll();
+    }).catch(function () {
+      S.createRoom.pending = false;
+      out.textContent = "";
+      out.appendChild(E("div", "ad-errorbox", null, "Could not create the room. Check the admin token and try again."));
+    });
+  }
+
+  /* ------------------------------------------------------------ delete room */
+  function deleteRoomRequest(room) {
+    return api("/admin/delete-room", { room: room });
+  }
+  function renderDeleteDialog() {
+    var wrap = document.getElementById("drdWrap");
+    var scrim = document.getElementById("drdScrim");
+    if (!wrap || !scrim) { return; }
+    var open = !!S.deleteRoom;
+    wrap.hidden = !open;
+    scrim.hidden = !open;
+    if (!open) { return; }
+    var root = document.getElementById("drdRoot");
+    if (!root || root.getAttribute("data-room") !== S.deleteRoom.target) {
+      buildDeleteDialog();
+    } else {
+      syncDeleteDialog();
+    }
+  }
+  function buildDeleteDialog() {
+    var wrap = document.getElementById("drdWrap");
+    var room = S.deleteRoom.target;
+    var messages = ((S.data && S.data.messages) || []).filter(function (m) { return m.room === room; }).length;
+    var codes = ((S.data && S.data.codes) || []).filter(function (c) { return c.room === room; }).length;
+    var root = E("div", "drd-root", { id: "drdRoot", "data-room": room, "aria-label": "Delete room", "data-testid": "delete-room-dialog" });
+    root.appendChild(E("h2", "drd-title", null, "Delete #" + room));
+    root.appendChild(E("p", "drd-copy", null,
+      "This permanently deletes " + messages + " message" + (messages === 1 ? "" : "s") +
+      " and revokes " + codes + " agent access code" + (codes === 1 ? "" : "s") +
+      " for #" + room + ". Agents using those codes will lose access immediately."));
+    root.appendChild(E("label", "drd-label", { "for": "drdConfirmInput" }, "Type ", E("b", null, null, room), " to confirm"));
+    root.appendChild(E("input", "drd-field", { id: "drdConfirmInput", autocomplete: "off", value: S.deleteRoom.typed }));
+    root.appendChild(E("div", "drd-actrow", null,
+      E("button", "drd-btn", { type: "button", id: "drdCancel" }, "Cancel"),
+      E("button", "drd-btn danger", { type: "button", id: "drdConfirm" }, "Delete room")));
+    root.appendChild(E("div", null, { id: "drdOut" }));
+    wrap.textContent = "";
+    wrap.appendChild(root);
+    var input = document.getElementById("drdConfirmInput");
+    if (input) { input.focus(); }
+    syncDeleteDialog();
+  }
+  function syncDeleteDialog() {
+    var confirm = document.getElementById("drdConfirm");
+    if (!confirm || !S.deleteRoom) { return; }
+    confirm.disabled = S.deleteRoom.typed !== S.deleteRoom.target || S.deleteRoom.pending;
+    confirm.textContent = S.deleteRoom.pending ? "Deleting…" : "Delete room";
+    var out = document.getElementById("drdOut");
+    if (out) {
+      out.textContent = "";
+      if (S.deleteRoom.error) { out.appendChild(E("div", "drd-errorbox", null, S.deleteRoom.error)); }
+    }
+  }
+  function doDeleteRoom() {
+    if (!S.deleteRoom || S.deleteRoom.typed !== S.deleteRoom.target || S.deleteRoom.pending) { return; }
+    var room = S.deleteRoom.target;
+    S.deleteRoom.pending = true;
+    syncDeleteDialog();
+    deleteRoomRequest(room).then(function () {
+      S.deleteRoom = null;
+      var done = document.getElementById("drdRoot");
+      if (done) { done.remove(); }
+      renderDeleteDialog();
+      return poll();
+    }).catch(function () {
+      S.deleteRoom.pending = false;
+      S.deleteRoom.error = "Could not delete the room. Try again.";
+      syncDeleteDialog();
+    });
+  }
+
   /* ------------------------------------------------------------------- net */
   function api(path, body) {
     return fetch(path, {
@@ -702,10 +981,23 @@ DASHBOARD_HTML = r"""<!doctype html>
   /* ---------------------------------------------------------------- render */
   function renderAll() {
     renderSidebar();
-    renderHeader();
-    renderTimeline();
-    renderComposer();
+    var noRooms = roomList().length === 0;
+    var header = document.getElementById("convHeader");
+    var timeline = document.getElementById("timeline");
+    var composerBox = document.getElementById("composerBox");
+    var noRoomBox = document.getElementById("convNoRoom");
+    if (header) { header.hidden = noRooms; }
+    if (timeline) { timeline.hidden = noRooms; }
+    if (composerBox) { composerBox.hidden = noRooms; }
+    if (noRoomBox) { noRoomBox.hidden = !noRooms; }
+    if (!noRooms) {
+      renderHeader();
+      renderTimeline();
+      renderComposer();
+    }
     renderDrawer();
+    renderCreateRoom();
+    renderDeleteDialog();
     var navWrap = document.getElementById("navWrap");
     var navScrim = document.getElementById("navScrim");
     if (navWrap) {
@@ -772,7 +1064,7 @@ DASHBOARD_HTML = r"""<!doctype html>
     main.appendChild(E("header", "conv-header", { id: "convHeader" }));
     main.appendChild(E("div", "conv-timeline", { id: "timeline", "data-testid": "timeline" }));
 
-    var composer = E("div", "conv-composer", { "data-testid": "composer" });
+    var composer = E("div", "conv-composer", { id: "composerBox", "data-testid": "composer" });
     composer.appendChild(E("div", "conv-composer__error", { id: "composerError", role: "alert", "data-testid": "composer-error", hidden: true }));
     var framebox = E("div", "conv-composer__frame");
     framebox.appendChild(E("input", "conv-composer__input", {
@@ -792,6 +1084,10 @@ DASHBOARD_HTML = r"""<!doctype html>
     framebox.appendChild(row);
     composer.appendChild(framebox);
     main.appendChild(composer);
+    main.appendChild(E("div", "conv-noroom", { id: "convNoRoom", hidden: true },
+      E("p", "conv-noroom__title", null, "No rooms yet"),
+      E("p", "conv-noroom__body", null, "Create a room to start a conversation."),
+      E("button", "conv-noroom__cta", { type: "button", id: "convNoRoomCreate" }, "+ Create room")));
     col.appendChild(main);
     root.appendChild(col);
 
@@ -799,6 +1095,12 @@ DASHBOARD_HTML = r"""<!doctype html>
       { id: "drawerScrim", type: "button", "aria-label": "Close admin drawer", hidden: true }));
     root.appendChild(E("div", "fixed inset-y-0 right-0 z-50 w-[min(430px,100vw)] border-[var(--border-strong)] border-l",
       { id: "drawerWrap", hidden: true }));
+
+    root.appendChild(E("button", "crp-scrim", { id: "crScrim", type: "button", "aria-label": "Close create room", hidden: true }));
+    root.appendChild(E("div", "crp-wrap", { id: "crWrap", hidden: true }));
+
+    root.appendChild(E("button", "drd-scrim", { id: "drdScrim", type: "button", "aria-label": "Cancel delete room", hidden: true }));
+    root.appendChild(E("div", "drd-wrap", { id: "drdWrap", hidden: true }));
 
     app.appendChild(root);
   }
@@ -844,6 +1146,31 @@ DASHBOARD_HTML = r"""<!doctype html>
         S.view = { kind: "dm", room: S.view.room, agent: t.getAttribute("data-agent") };
         S.navOpen = false; S.stick = true; renderAll(); return;
       }
+      if (t.hasAttribute("data-room-menu")) {
+        var menuRoom = t.getAttribute("data-room-menu");
+        S.roomMenuOpen = S.roomMenuOpen === menuRoom ? null : menuRoom;
+        renderSidebar();
+        return;
+      }
+      if (t.hasAttribute("data-archive-room")) {
+        archiveRoom(t.getAttribute("data-archive-room"));
+        S.roomMenuOpen = null;
+        renderSidebar();
+        return;
+      }
+      if (t.hasAttribute("data-restore-room")) {
+        restoreRoom(t.getAttribute("data-restore-room"));
+        renderSidebar();
+        return;
+      }
+      if (t.hasAttribute("data-delete-room")) {
+        var deleteTarget = t.getAttribute("data-delete-room");
+        S.roomMenuOpen = null;
+        S.deleteRoom = { target: deleteTarget, typed: "", pending: false, error: null };
+        renderSidebar();
+        renderDeleteDialog();
+        return;
+      }
       if (t.hasAttribute("data-theme-pick")) { applyTheme(t.getAttribute("data-theme-pick")); return; }
       if (t.hasAttribute("data-to")) {
         var pick = t.getAttribute("data-to");
@@ -866,10 +1193,36 @@ DASHBOARD_HTML = r"""<!doctype html>
 
       switch (id) {
         case "navOpen": S.navOpen = true; renderAll(); break;
+        case "openCreateRoom": case "sbEmptyCreateRoom": case "convNoRoomCreate":
+          S.createRoom = { open: true, pending: false };
+          renderCreateRoom();
+          break;
+        case "crClose": case "crScrim": {
+          S.createRoom.open = false;
+          var crRoot = document.getElementById("crRoot");
+          if (crRoot) { crRoot.remove(); }
+          renderCreateRoom();
+          break;
+        }
+        case "crSubmit": doCreateRoom(); break;
+        case "drdCancel": case "drdScrim": {
+          S.deleteRoom = null;
+          var drdRoot = document.getElementById("drdRoot");
+          if (drdRoot) { drdRoot.remove(); }
+          renderDeleteDialog();
+          break;
+        }
+        case "drdConfirm": doDeleteRoom(); break;
         case "navScrim": S.navOpen = false; renderAll(); break;
         case "openDrawer": S.drawerOpen = true; renderDrawer(); break;
+        case "convInviteBtn":
+          S.inviteRoomHint = S.view.room;
+          S.drawerOpen = true;
+          renderDrawer();
+          break;
         case "adClose": case "drawerScrim": S.drawerOpen = false; renderDrawer(); break;
         case "recentToggle": S.recentOpen = !S.recentOpen; renderSidebar(); break;
+        case "archivedToggle": S.archivedOpen = !S.archivedOpen; renderSidebar(); break;
         case "backToRoom": S.view = { kind: "room", room: S.view.room, agent: null }; S.stick = true; renderAll(); break;
         case "toPill": S.menuOpen = !S.menuOpen; renderComposer(); break;
         case "expectsPill": {
@@ -895,6 +1248,11 @@ DASHBOARD_HTML = r"""<!doctype html>
 
     document.addEventListener("input", function (ev) {
       if (ev.target.id === "composerInput") { renderComposer(); }
+      if (ev.target.id === "crRoom" || ev.target.id === "crName") { refreshCreateRoomHint(); }
+      if (ev.target.id === "drdConfirmInput" && S.deleteRoom) {
+        S.deleteRoom.typed = ev.target.value;
+        syncDeleteDialog();
+      }
     });
     document.addEventListener("keydown", function (ev) {
       if (ev.target.id === "composerInput" && ev.key === "Enter") { ev.preventDefault(); doSend(); }
@@ -997,7 +1355,19 @@ DASHBOARD_HTML = r"""<!doctype html>
      Read-only maths on strings/numbers: no state, no network, no DOM writes. */
   window.__argy = {
     hueFor: hueFor, glyphFor: glyphFor, brandAccent: brandAccent,
-    lastSeen: lastSeen, elapsedSince: elapsedSince, dedupe: dedupe
+    lastSeen: lastSeen, elapsedSince: elapsedSince, dedupe: dedupe,
+    isValidRoomName: isValidRoomName
+  };
+
+  /* Test seam — lets the Playwright suite simulate arbitrary /admin/state
+     payloads (e.g. zero rooms) without a second live relay. Always present,
+     like window.__argy above: there is no build step here to strip it in
+     "production", and it can only mutate this tab's local render state,
+     never anything server-side. */
+  window.__setState = function (data) {
+    S.data = data;
+    S.agents = reconcile(data);
+    renderAll();
   };
 
   /* ------------------------------------------------------------------ boot */

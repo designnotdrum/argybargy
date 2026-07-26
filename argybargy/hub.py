@@ -99,6 +99,12 @@ class Hub:
         for ev in list(self._waiters.get(room, [])):
             ev.set()
 
+    def drop_room(self, room: str) -> None:
+        """Wake any in-flight long-poll for `room`, then discard its ephemeral state."""
+        self._wake(room)
+        self._waiters.pop(room, None)
+        self._last_seen.pop(room, None)
+
     # ----- durable store access (offloaded to a threadpool) -----
 
     async def post(self, room, frm, to, text, expects_reply="none") -> dict:
@@ -119,6 +125,10 @@ class Hub:
             msgs = await asyncio.to_thread(self.store.since, room, peer, since)
             if msgs or wait <= 0:
                 return msgs, await asyncio.to_thread(self.store.room_seq, room)
+            if room not in self._waiters:
+                # drop_room() popped our waiter list out from under us: the room is
+                # gone, so stop blocking instead of re-arming a wake nobody can send.
+                return [], await asyncio.to_thread(self.store.room_seq, room)
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return [], await asyncio.to_thread(self.store.room_seq, room)
