@@ -68,6 +68,14 @@ DASHBOARD_HTML = r"""<!doctype html>
 .drd-btn.danger{border-color:var(--red);color:var(--red)}
 .drd-btn:disabled{opacity:.5;cursor:not-allowed}
 .drd-errorbox{margin-top:8px;padding:6px 8px;border:1px solid var(--red-dim);border-radius:6px;background:var(--red-dim);color:var(--red);font-size:11px}
+.sb-rooms-empty{padding:10px 16px}
+.sb-rooms-empty__text{margin:0 0 8px;color:var(--muted);font-size:12px}
+.sb-rooms-empty__cta{display:flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid var(--border-strong);border-radius:6px;background:var(--raised);color:var(--text);font-size:12px;cursor:pointer}
+.sb-rooms-empty__cta:hover{border-color:var(--green);color:var(--green)}
+.conv-noroom{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:8px;padding:24px;text-align:center}
+.conv-noroom__title{margin:0;color:var(--text);font-size:14px;font-weight:600}
+.conv-noroom__body{margin:0 0 8px;color:var(--muted);font-size:12px}
+.conv-noroom__cta{display:flex;align-items:center;gap:6px;padding:7px 14px;border:1px solid var(--border-strong);border-radius:8px;background:var(--raised);color:var(--text);font-size:12px;cursor:pointer;margin:0 auto}
 </style>
 </head>
 <body>
@@ -403,19 +411,25 @@ DASHBOARD_HTML = r"""<!doctype html>
       E("span", null, null, "Rooms"),
       E("button", "sb-iconbtn-sm", { type: "button", id: "openCreateRoom", "aria-label": "Create room", title: "Create room" }, "+")));
     var allRooms = roomList();
-    var visibleRooms = allRooms.filter(function (r) { return !S.archivedRooms[r]; });
-    var archivedRoomsList = allRooms.filter(function (r) { return S.archivedRooms[r]; });
-    var rl = E("div", null, { "data-testid": "room-list" });
-    visibleRooms.forEach(function (r) { rl.appendChild(roomRow(r, false)); });
-    out.appendChild(rl);
-    if (archivedRoomsList.length) {
-      out.appendChild(E("button", S.archivedOpen ? "sb-recent-head open" : "sb-recent-head",
-        { type: "button", id: "archivedToggle", "aria-expanded": S.archivedOpen ? "true" : "false" },
-        icon("caretRight", 12, "sb-ph"), " Archived · " + archivedRoomsList.length));
-      if (S.archivedOpen) {
-        var al2 = E("div", null, { "data-testid": "archived-room-list" });
-        archivedRoomsList.forEach(function (r) { al2.appendChild(roomRow(r, true)); });
-        out.appendChild(al2);
+    if (allRooms.length === 0) {
+      out.appendChild(E("div", "sb-rooms-empty", null,
+        E("p", "sb-rooms-empty__text", null, "No rooms yet"),
+        E("button", "sb-rooms-empty__cta", { type: "button", id: "sbEmptyCreateRoom" }, "+ Create room")));
+    } else {
+      var visibleRooms = allRooms.filter(function (r) { return !S.archivedRooms[r]; });
+      var archivedRoomsList = allRooms.filter(function (r) { return S.archivedRooms[r]; });
+      var rl = E("div", null, { "data-testid": "room-list" });
+      visibleRooms.forEach(function (r) { rl.appendChild(roomRow(r, false)); });
+      out.appendChild(rl);
+      if (archivedRoomsList.length) {
+        out.appendChild(E("button", S.archivedOpen ? "sb-recent-head open" : "sb-recent-head",
+          { type: "button", id: "archivedToggle", "aria-expanded": S.archivedOpen ? "true" : "false" },
+          icon("caretRight", 12, "sb-ph"), " Archived · " + archivedRoomsList.length));
+        if (S.archivedOpen) {
+          var al2 = E("div", null, { "data-testid": "archived-room-list" });
+          archivedRoomsList.forEach(function (r) { al2.appendChild(roomRow(r, true)); });
+          out.appendChild(al2);
+        }
       }
     }
 
@@ -945,9 +959,20 @@ DASHBOARD_HTML = r"""<!doctype html>
   /* ---------------------------------------------------------------- render */
   function renderAll() {
     renderSidebar();
-    renderHeader();
-    renderTimeline();
-    renderComposer();
+    var noRooms = roomList().length === 0;
+    var header = document.getElementById("convHeader");
+    var timeline = document.getElementById("timeline");
+    var composerBox = document.getElementById("composerBox");
+    var noRoomBox = document.getElementById("convNoRoom");
+    if (header) { header.hidden = noRooms; }
+    if (timeline) { timeline.hidden = noRooms; }
+    if (composerBox) { composerBox.hidden = noRooms; }
+    if (noRoomBox) { noRoomBox.hidden = !noRooms; }
+    if (!noRooms) {
+      renderHeader();
+      renderTimeline();
+      renderComposer();
+    }
     renderDrawer();
     renderCreateRoom();
     renderDeleteDialog();
@@ -1017,7 +1042,7 @@ DASHBOARD_HTML = r"""<!doctype html>
     main.appendChild(E("header", "conv-header", { id: "convHeader" }));
     main.appendChild(E("div", "conv-timeline", { id: "timeline", "data-testid": "timeline" }));
 
-    var composer = E("div", "conv-composer", { "data-testid": "composer" });
+    var composer = E("div", "conv-composer", { id: "composerBox", "data-testid": "composer" });
     composer.appendChild(E("div", "conv-composer__error", { id: "composerError", role: "alert", "data-testid": "composer-error", hidden: true }));
     var framebox = E("div", "conv-composer__frame");
     framebox.appendChild(E("input", "conv-composer__input", {
@@ -1037,6 +1062,10 @@ DASHBOARD_HTML = r"""<!doctype html>
     framebox.appendChild(row);
     composer.appendChild(framebox);
     main.appendChild(composer);
+    main.appendChild(E("div", "conv-noroom", { id: "convNoRoom", hidden: true },
+      E("p", "conv-noroom__title", null, "No rooms yet"),
+      E("p", "conv-noroom__body", null, "Create a room to start a conversation."),
+      E("button", "conv-noroom__cta", { type: "button", id: "convNoRoomCreate" }, "+ Create room")));
     col.appendChild(main);
     root.appendChild(col);
 
@@ -1142,7 +1171,7 @@ DASHBOARD_HTML = r"""<!doctype html>
 
       switch (id) {
         case "navOpen": S.navOpen = true; renderAll(); break;
-        case "openCreateRoom":
+        case "openCreateRoom": case "sbEmptyCreateRoom": case "convNoRoomCreate":
           S.createRoom = { open: true, pending: false };
           renderCreateRoom();
           break;
@@ -1306,6 +1335,17 @@ DASHBOARD_HTML = r"""<!doctype html>
     hueFor: hueFor, glyphFor: glyphFor, brandAccent: brandAccent,
     lastSeen: lastSeen, elapsedSince: elapsedSince, dedupe: dedupe,
     isValidRoomName: isValidRoomName
+  };
+
+  /* Test seam — lets the Playwright suite simulate arbitrary /admin/state
+     payloads (e.g. zero rooms) without a second live relay. Always present,
+     like window.__argy above: there is no build step here to strip it in
+     "production", and it can only mutate this tab's local render state,
+     never anything server-side. */
+  window.__setState = function (data) {
+    S.data = data;
+    S.agents = reconcile(data);
+    renderAll();
   };
 
   /* ------------------------------------------------------------------ boot */

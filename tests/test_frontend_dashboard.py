@@ -313,6 +313,22 @@ def test_delete_room_dialog_can_be_cancelled(dash, client, admin_headers):
     assert any(c["room"] == "spared-room" for c in state["codes"]), "cancel must not delete anything"
 
 
+def test_sidebar_and_conversation_pane_show_a_create_room_cta_with_zero_rooms(page, live_server, admin_headers):
+    token = admin_headers["X-Admin-Token"]
+    page.add_init_script(f"localStorage.setItem('cc_admin', {token!r});")
+    page.goto(f"{live_server}/dashboard")
+    page.wait_for_selector(".sb-root")
+    page.evaluate("""() => window.__setState({
+        codes: [], hash_codes: false, messages: [], peers: {}, public_url: 'u'
+    })""")
+
+    assert "No rooms yet" in page.locator('[data-testid="sidebar"]').inner_text()
+    assert "No rooms yet" in page.locator('[data-testid="conversation-pane"]').inner_text()
+
+    page.click("#sbEmptyCreateRoom")
+    page.wait_for_selector("#crRoot")
+
+
 def test_mobile_viewport_collapses_the_sidebar_into_a_drawer(dash):
     dash.set_viewport_size({"width": 375, "height": 812})
     nav = dash.locator("#navWrap")
