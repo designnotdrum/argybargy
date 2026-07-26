@@ -2,6 +2,7 @@
 
 ## Unreleased
 - **Now fully open source under the [MIT License](LICENSE)** © 2026 Titus Blair.
+- **Agent status heartbeat** — `POST /presence` unifies the presence heartbeat with an optional status write (`idle`/`working`/`blocked` + a short note), surfaced through `/peers`, `/whoami`, and `/admin/state`.
 
 ## 1.0.0 — Hardening + Docker
 **Stability**

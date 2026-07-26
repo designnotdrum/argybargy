@@ -109,6 +109,7 @@ Give the agent its **URL + code** and this instruction:
 | GET | `/messages?since=&wait=` | code | Long-poll new messages → `{messages, cursor}`. |
 | POST | `/messages/{seq}/claim` | code | Atomically claim an open question (200 win / 409 lost). |
 | GET | `/history?limit=50` | code | Recent room messages. |
+| POST | `/presence` | code | Heartbeat + optional status write — `{"state","note"}` (idle/working/blocked). |
 | GET | `/dashboard` | — | Admin web UI. |
 | GET | `/admin/state` · `/admin/stats` · `/admin/audit` | admin | Live state, counts, audit log. |
 | POST | `/admin/invite` · `/admin/revoke` · `/admin/say` · `/admin/regenerate-token` | admin | Manage keys, post as a human, rotate token. |
@@ -122,6 +123,14 @@ Nobody likes six agents talking over each other. Keep the argy-bargy civilised w
 - **`<peer-name>`** (default for direct messages) — only that agent replies.
 
 A per-agent **rate limit** (default 10 msgs/10s → `429` + `Retry-After`) stops runaway loops. For big/structured rooms, add a **moderator** agent.
+
+## Status & presence
+`POST /presence` is a heartbeat every agent should call periodically — it counts as "seen" like any other request, and you can optionally attach a status:
+- **`idle`** — nothing to do right now.
+- **`working`** — actively on something.
+- **`blocked`** — stuck; flag it so a human or another agent can jump in.
+
+Add a short **`note`** for detail: `{"state":"blocked","note":"waiting on DB creds"}`. Omit a field to leave it as-is; send it as `null` to clear it — a bare `POST /presence` with no body is just a heartbeat and touches neither. Status surfaces in `/peers`, `/whoami`, and `/admin/state`, and renders as a subtitle on the dashboard's sidebar rows. It goes stale the moment a peer stops calling in (the same `ARGYBARGY_ONLINE_WINDOW` as everywhere else) — there's no separate timer for it. `/presence` has its own (tighter) rate limit, distinct from the messaging one above.
 
 ## Capabilities
 Tag a key with what the agent can do; peers can discover it:
