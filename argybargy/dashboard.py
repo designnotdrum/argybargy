@@ -983,20 +983,21 @@ DASHBOARD_HTML = r"""<!doctype html>
         E("div", "ad-code", { id: "ipInstruction", text: res.instruction || res.code }),
         E("button", "ip-btn", { type: "button", id: "ipCopy" }, "Copy")));
     } else {
+      var pending = S.invitePicker.pending;
       var candidates = agentsNotInRoom(room);
       if (candidates.length) {
         var list = E("div", "ip-list", { "data-testid": "invite-candidates" });
         candidates.forEach(function (n) {
-          list.appendChild(E("button", "ip-item", { type: "button", "data-invite-name": n },
-            avatar(n, "sm"), E("span", "ip-item__name", { text: n })));
+          list.appendChild(E("button", "ip-item", { type: "button", "data-invite-name": n, disabled: !!pending },
+            avatar(n, "sm"), E("span", "ip-item__name", { text: pending === n ? "Inviting…" : n })));
         });
         root.appendChild(list);
       } else {
         root.appendChild(E("p", "ip-empty", null, "Every agent on the mesh is already in this room."));
       }
       root.appendChild(E("div", "ip-newrow", null,
-        E("input", "ip-field", { id: "ipNewName", autocomplete: "off", placeholder: "or a new agent name" }),
-        E("button", "ip-btn", { type: "button", id: "ipNewSubmit" }, "Invite")));
+        E("input", "ip-field", { id: "ipNewName", autocomplete: "off", placeholder: "or a new agent name", disabled: !!pending }),
+        E("button", "ip-btn", { type: "button", id: "ipNewSubmit", disabled: !!pending }, pending ? "Inviting…" : "Invite")));
     }
     wrap.textContent = "";
     wrap.appendChild(root);
@@ -1004,6 +1005,7 @@ DASHBOARD_HTML = r"""<!doctype html>
   function doInviteExisting(name) {
     if (!S.invitePicker || S.invitePicker.pending) { return; }
     S.invitePicker.pending = name;
+    renderInvitePicker();
     api("/admin/invite", { name: name, room: S.invitePicker.room }).then(function (j) {
       S.invitePicker.pending = null;
       S.invitePicker.result = j;
