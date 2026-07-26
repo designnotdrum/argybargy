@@ -517,6 +517,35 @@ DASHBOARD_HTML = r"""<!doctype html>
     var caretPos = before.length;
     input.setSelectionRange(caretPos, caretPos);
   }
+  /* Commits whichever candidate is currently highlighted — the shared
+     landing point for both Enter and Tab when the popup is open. */
+  function commitHighlightedMentionCandidate() {
+    if (!S.mentionQuery) { return; }
+    var candidates = filterMentionCandidates(S.mentionQuery.query, onlinePeerNamesInRoom());
+    var picked = candidates[S.mentionHighlight];
+    if (picked) { commitMentionCandidate(picked); }
+  }
+  /* Backspace on an EMPTY #composerInput with the caret at position 0, with
+     at least one committed chip present, removes the last chip and
+     reinserts a bare "@" — cursor right after it, which reopens the popup
+     via the input listener's own trigger detection with an empty query. A
+     second Backspace on that single "@" character is ordinary browser
+     Backspace behavior (deletes it), and the input listener's trigger
+     detection naturally closes the popup since findActiveTrigger("", 0) is
+     null. This is the rail-design adaptation of the spec's "backspace
+     immediately after a chip decomposes it" — see the top-of-plan
+     Architecture section, point 3. */
+  function decomposeLastChip() {
+    var input = document.getElementById("composerInput");
+    if (!input || !S.chips.length) { return; }
+    S.chips = S.chips.slice(0, -1);
+    input.value = "@" + input.value;
+    S.mentionQuery = { start: 0, query: "" };
+    S.mentionHighlight = 0;
+    renderComposer();
+    input.focus();
+    input.setSelectionRange(1, 1);
+  }
 
   /* --------------------------------------------------------------- sidebar */
   function renderSidebar() {
@@ -1168,7 +1197,46 @@ DASHBOARD_HTML = r"""<!doctype html>
       renderComposer();
     });
     document.addEventListener("keydown", function (ev) {
-      if (ev.target.id === "composerInput" && ev.key === "Enter") { ev.preventDefault(); doSend(); }
+      if (ev.target.id !== "composerInput") { return; }
+      var key = ev.key;
+      if (key === "Enter") {
+        ev.preventDefault();
+        if (S.mentionQuery !== null) { commitHighlightedMentionCandidate(); return; }
+        doSend();
+        return;
+      }
+      if (key === "Tab" && S.mentionQuery !== null) {
+        ev.preventDefault();
+        commitHighlightedMentionCandidate();
+        return;
+      }
+      if (key === "Escape" && S.mentionQuery !== null) {
+        ev.preventDefault();
+        S.mentionQuery = null;
+        renderComposer();
+        return;
+      }
+      if (key === "ArrowDown" && S.mentionQuery !== null) {
+        ev.preventDefault();
+        var downCandidates = filterMentionCandidates(S.mentionQuery.query, onlinePeerNamesInRoom());
+        S.mentionHighlight = Math.min(S.mentionHighlight + 1, downCandidates.length - 1);
+        renderComposer();
+        return;
+      }
+      if (key === "ArrowUp" && S.mentionQuery !== null) {
+        ev.preventDefault();
+        S.mentionHighlight = Math.max(S.mentionHighlight - 1, 0);
+        renderComposer();
+        return;
+      }
+      if (key === "Backspace") {
+        var input = ev.target;
+        if (input.selectionStart === 0 && input.selectionEnd === 0 &&
+            S.chips.length > 0 && S.mentionQuery === null) {
+          ev.preventDefault();
+          decomposeLastChip();
+        }
+      }
     });
     document.addEventListener("scroll", function (ev) {
       var el = ev.target;

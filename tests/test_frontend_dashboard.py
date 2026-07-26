@@ -452,6 +452,89 @@ def test_dm_view_does_not_open_the_mention_popup(dash):
     assert dash.locator('[data-testid="mention-popup"]').is_hidden()
 
 
+def test_committing_via_tab_produces_the_same_chip_as_a_click(dash):
+    dash.fill("#composerInput", "@cod")
+    dash.press("#composerInput", "Tab")
+    chip = dash.locator('[data-testid="mention-chip"]')
+    assert chip.count() == 1
+    assert "codex-ui" in chip.inner_text()
+
+
+def test_committing_via_enter_produces_a_chip_and_does_not_send(dash, client, admin_headers, seeded):
+    dash.fill("#composerInput", "@cod")
+    dash.press("#composerInput", "Enter")
+    chip = dash.locator('[data-testid="mention-chip"]')
+    assert chip.count() == 1
+    assert "codex-ui" in chip.inner_text()
+    # A DOM substring check against the timeline collides with an earlier
+    # test's already-sent "@codex-ui is faster than @claude-ui" message in
+    # this session-scoped room (test_commit_only_plain_at_mentions_with_no_interaction_send_literally_to_all,
+    # above) — "@cod" is a substring of "@codex-ui". Check the exact message
+    # list via the admin API instead, matching that neighboring test's own
+    # technique, so this only fails if "@cod" was itself sent as a message.
+    msgs = client.get("/admin/state", headers=admin_headers).json()["messages"]
+    assert not any(m["text"] == "@cod" for m in msgs)
+
+
+def test_arrow_down_then_enter_commits_the_second_candidate(dash):
+    dash.fill("#composerInput", "@")
+    # Popup order (Task 2's test proved this): everyone, claude-ui, codex-ui,
+    # gemini-ui, hermes-ui — one ArrowDown from the default highlight (0)
+    # lands on claude-ui.
+    dash.press("#composerInput", "ArrowDown")
+    dash.press("#composerInput", "Enter")
+    chip = dash.locator('[data-testid="mention-chip"]')
+    assert chip.count() == 1
+    assert "claude-ui" in chip.inner_text()
+
+
+def test_escape_leaves_the_typed_text_as_plain_text(dash):
+    dash.fill("#composerInput", "@cod")
+    dash.press("#composerInput", "Escape")
+    assert dash.locator('[data-testid="mention-popup"]').is_hidden()
+    assert dash.locator('[data-testid="mention-chip"]').count() == 0
+    assert dash.locator("#composerInput").input_value() == "@cod"
+
+
+def test_enter_with_the_popup_closed_still_sends(dash):
+    dash.fill("#composerInput", "plain message")
+    dash.press("#composerInput", "Enter")
+    # doSend() is a two-hop async chain (POST /admin/say, then poll()'s GET
+    # /admin/state, then render) — same as every other send-assertion test
+    # in this file (see test_commit_only_plain_at_mentions_with_no_interaction_send_literally_to_all
+    # above, which waits 500ms after a #sendBtn click for the identical
+    # reason). Asserting immediately races the network round trip.
+    dash.wait_for_timeout(500)
+    assert dash.locator('[data-testid="timeline"]').inner_text().find("plain message") >= 0
+
+
+def test_backspace_decomposes_the_last_chip_then_removes_the_bare_at(dash):
+    dash.fill("#composerInput", "@cod")
+    dash.press("#composerInput", "Tab")
+    assert dash.locator('[data-testid="mention-chip"]').count() == 1
+    assert dash.locator('[data-testid="mention-rail"]').is_visible()
+    # Tab-commit prevents the browser's default tab-focus-move and
+    # commitMentionCandidate() synchronously refocuses #composerInput either
+    # way (see the top-of-plan Architecture section) — press() also
+    # auto-focuses its target selector, so this specific sequence has no
+    # focus trap to guard against. (Contrast Task 5's chip-tap test, where
+    # the trap is real and an explicit refocus is required.)
+    dash.press("#composerInput", "Backspace")
+    assert dash.locator('[data-testid="mention-chip"]').count() == 0
+    # Task 2's test (test_mention_rail_appears_only_while_chips_are_committed)
+    # proved this via a room-switch reset, the only removal mechanism it had
+    # available; decomposeLastChip() is the genuine single-chip removal path
+    # this correction asked to see covered, and it self-refocuses the input
+    # (no click involved), so no explicit refocus is needed around this
+    # assertion either.
+    assert dash.locator('[data-testid="mention-rail"]').is_hidden()
+    assert dash.locator('[data-testid="mention-popup"]').is_visible()
+    assert dash.locator("#composerInput").input_value() == "@"
+    dash.press("#composerInput", "Backspace")
+    assert dash.locator('[data-testid="mention-popup"]').is_hidden()
+    assert dash.locator("#composerInput").input_value() == ""
+
+
 # ============================================================ rendering
 def test_sidebar_lists_rooms_and_agents(dash, seeded):
     assert dash.locator(f'[data-room="{seeded["room"]}"]').count() == 1
