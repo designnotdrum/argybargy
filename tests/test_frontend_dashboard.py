@@ -380,6 +380,33 @@ def test_typing_at_opens_mention_popup_and_filters(dash):
     assert "codex-ui" in candidates.first.inner_text()
 
 
+def test_mention_popup_stays_within_the_viewport_when_opened_from_the_composer(dash):
+    """Positioning bug: the popup used to open unconditionally *below* the
+    trigger via a hardcoded top:calc(100% + 4px) override, but the composer
+    sits at the very bottom of this full-height layout — there is no room
+    below it, so the popup ran off the bottom of the viewport.
+
+    A plain .is_visible() check isn't enough to catch that: Playwright
+    treats an element as visible as soon as any part of it intersects the
+    viewport, so a popup hanging mostly off-screen can still report
+    visible=true. Assert the real bounding box against the viewport height
+    instead — that's the only thing that actually proves it isn't clipped.
+    """
+    viewport = dash.viewport_size
+    dash.fill("#composerInput", "@")
+    dash.wait_for_selector('[data-testid="mention-popup"]')
+    popup = dash.locator('[data-testid="mention-popup"]')
+    assert popup.is_visible()
+    box = popup.bounding_box()
+    assert box is not None, "popup has no layout box"
+    assert box["y"] >= 0, f"popup top ({box['y']}) is above the top of the viewport"
+    bottom = box["y"] + box["height"]
+    assert bottom <= viewport["height"], (
+        f"popup bottom ({bottom}) runs off the {viewport['height']}px-tall "
+        "viewport — it should have opened above the composer instead"
+    )
+
+
 def test_mention_candidates_never_include_the_operator(dash):
     dash.fill("#composerInput", "@")
     names = dash.locator('[data-testid="mention-candidate"]').all_inner_texts()
