@@ -535,6 +535,54 @@ def test_backspace_decomposes_the_last_chip_then_removes_the_bare_at(dash):
     assert dash.locator("#composerInput").input_value() == ""
 
 
+def test_preview_strip_matches_the_actual_payload_for_a_plain_broadcast(
+    dash, client, admin_headers, seeded
+):
+    strip = dash.locator('[data-testid="preview-strip"]')
+    assert "everyone" in strip.inner_text()
+    assert strip.inner_text().endswith("reply expected: none")
+    dash.fill("#composerInput", "hello room")
+    dash.press("#composerInput", "Enter")
+    dash.wait_for_timeout(500)
+    msgs = client.get("/admin/state", headers=admin_headers).json()["messages"]
+    sent = [m for m in msgs if m["text"] == "hello room" and m["room"] == seeded["room"]]
+    assert sent, "message should have reached the relay"
+    assert sent[0]["to"] == "all"
+    assert sent[0]["expects_reply"] == "none"
+
+
+def test_preview_strip_shows_the_resolved_target_for_a_committed_chip(dash):
+    # Display-only at this point in the branch — doSend() still sources
+    # to/expects_reply from the old pills until Task 5's cutover, so this
+    # test asserts the strip's TEXT only, not an actual sent payload (that
+    # assertion belongs to Task 5, once the strip and the real send path
+    # agree).
+    dash.fill("#composerInput", "@cod")
+    dash.press("#composerInput", "Tab")
+    strip = dash.locator('[data-testid="preview-strip"]')
+    assert "codex-ui" in strip.inner_text()
+    assert strip.inner_text().endswith("reply expected: codex-ui")
+
+
+def test_dm_view_preview_strip_tap_cycles_the_reply_marker_display(dash):
+    dash.click('[data-agent="codex-ui"]')
+    strip = dash.locator('[data-testid="preview-strip"]')
+    assert strip.inner_text().endswith("reply expected: codex-ui")
+    strip.click()
+    assert strip.inner_text().endswith("reply expected: anyone")
+    strip.click()
+    assert strip.inner_text().endswith("reply expected: none")
+    strip.click()
+    assert strip.inner_text().endswith("reply expected: codex-ui")
+
+
+def test_room_view_preview_strip_is_not_tappable(dash):
+    strip = dash.locator('[data-testid="preview-strip"]')
+    before = strip.inner_text()
+    strip.click()
+    assert strip.inner_text() == before
+
+
 # ============================================================ rendering
 def test_sidebar_lists_rooms_and_agents(dash, seeded):
     assert dash.locator(f'[data-room="{seeded["room"]}"]').count() == 1

@@ -47,6 +47,9 @@ DASHBOARD_HTML = r"""<!doctype html>
    (not display:none) keeps the swatch's box/alignment intact while
    reliably excluding its content from innerText, per spec. */
 .conv-mention-popup .conv-avatar:not(:has(svg)){visibility:hidden}
+.conv-preview-strip{display:block;width:100%;text-align:left;font-family:var(--mono);color:var(--faint);background:none;border:0;padding:6px 12px 0;font-size:11px;cursor:default}
+.conv-preview-strip--tappable{cursor:pointer}
+.conv-preview-strip--tappable:hover{color:var(--muted)}
 </style>
 </head>
 <body>
@@ -103,6 +106,7 @@ DASHBOARD_HTML = r"""<!doctype html>
     chips: [],                /* committed @mention chips, rail order = commit order */
     mentionQuery: null,       /* {start, query} when an active @trigger is open, else null */
     mentionHighlight: 0,      /* highlighted index in the mention popup */
+    dmReplyMarker: "default", /* DM view's 3-state reply marker, tapped via the preview strip */
     sendError: null,
     baseline: { now: Date.now(), key: "" },
     firstSeen: {},            /* "room#seq" -> ms, for the expects timer */
@@ -811,6 +815,16 @@ DASHBOARD_HTML = r"""<!doctype html>
         });
       }
     }
+    var strip = document.getElementById("previewStrip");
+    if (strip) {
+      var resolved = dm ? resolveDmPayload(dm, S.dmReplyMarker) : resolveWirePayload(S.chips);
+      var toLabel = resolveToForDisplay(dm, resolved.to);
+      var expectsLabel = resolveExpectsForDisplay(resolved.to, resolved.expects_reply);
+      strip.textContent = "";
+      strip.className = "conv-preview-strip" + (dm ? " conv-preview-strip--tappable" : "");
+      strip.title = dm ? "Tap to cycle reply expected" : "Preview only — set via @mentions";
+      strip.appendChild(document.createTextNode("→ " + toLabel + " · reply expected: " + expectsLabel));
+    }
   }
 
   /* ---------------------------------------------------------------- drawer */
@@ -1055,6 +1069,10 @@ DASHBOARD_HTML = r"""<!doctype html>
     mentionWrap.appendChild(E("div", "conv-chip-rail", { id: "mentionRail", "data-testid": "mention-rail", hidden: true }));
     mentionWrap.appendChild(E("div", "conv-menu conv-mention-popup", { id: "mentionPopup", "data-testid": "mention-popup", hidden: true }));
     framebox.appendChild(mentionWrap);
+    framebox.appendChild(E("button", "conv-preview-strip", {
+      type: "button", id: "previewStrip", "data-testid": "preview-strip",
+      title: "Preview only — set via @mentions"
+    }));
     var row = E("div", "conv-composer__row");
     row.appendChild(E("button", "conv-pill", { type: "button", id: "asPill", title: "Send-as identity — click to edit" }, "as "));
     var toWrap = E("div", "conv-composer__to-wrap", null,
@@ -1116,13 +1134,13 @@ DASHBOARD_HTML = r"""<!doctype html>
       if (t.hasAttribute("data-room")) {
         S.view = { kind: "room", room: t.getAttribute("data-room"), agent: null };
         S.navOpen = false; S.stick = true;
-        S.chips = []; S.mentionQuery = null; S.mentionHighlight = 0;
+        S.chips = []; S.mentionQuery = null; S.mentionHighlight = 0; S.dmReplyMarker = "default";
         renderAll(); return;
       }
       if (t.hasAttribute("data-agent")) {
         S.view = { kind: "dm", room: S.view.room, agent: t.getAttribute("data-agent") };
         S.navOpen = false; S.stick = true;
-        S.chips = []; S.mentionQuery = null; S.mentionHighlight = 0;
+        S.chips = []; S.mentionQuery = null; S.mentionHighlight = 0; S.dmReplyMarker = "default";
         renderAll(); return;
       }
       if (t.hasAttribute("data-theme-pick")) { applyTheme(t.getAttribute("data-theme-pick")); return; }
@@ -1164,6 +1182,12 @@ DASHBOARD_HTML = r"""<!doctype html>
         case "recentToggle": S.recentOpen = !S.recentOpen; renderSidebar(); break;
         case "backToRoom": S.view = { kind: "room", room: S.view.room, agent: null }; S.stick = true; renderAll(); break;
         case "toPill": S.menuOpen = !S.menuOpen; renderComposer(); break;
+        case "previewStrip": {
+          if (S.view.kind !== "dm") { break; }
+          S.dmReplyMarker = cycleReplyMarker(S.dmReplyMarker);
+          renderComposer();
+          break;
+        }
         case "expectsPill": {
           var dm = S.view.kind === "dm" ? S.view.agent : null;
           var target = dm || S.to;
