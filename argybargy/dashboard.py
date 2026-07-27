@@ -105,7 +105,8 @@ DASHBOARD_HTML = r"""<!doctype html>
 .conv-composer__mentions-wrap{position:relative}
 .conv-chip-rail{display:flex;flex-wrap:wrap;gap:8px;padding:10px 12px 0}
 .conv-chip-rail[hidden]{display:none}
-.conv-chip{display:inline-flex;align-items:center;gap:8px;height:22px;padding:0 9px;font-size:12px;font-weight:500;color:var(--agent, var(--muted));background:color-mix(in srgb, var(--agent, var(--border)) 12%, transparent);border:1px solid color-mix(in srgb, var(--agent, var(--border)) 38%, transparent);border-radius:999px}
+/* fixed height + zero vertical padding crushed the avatar; size to content with real vertical padding instead. Left padding stays tight since the avatar already carries visual weight there. */
+.conv-chip{display:inline-flex;align-items:center;gap:8px;padding:4px 8px 4px 4px;font-size:12px;font-weight:500;color:var(--agent, var(--muted));background:color-mix(in srgb, var(--agent, var(--border)) 12%, transparent);border:1px solid color-mix(in srgb, var(--agent, var(--border)) 38%, transparent);border-radius:999px}
 .conv-composer__frame{border-radius:8px}
 .conv-chip--armed{color:var(--amber);background:var(--amber-dim);border-color:color-mix(in srgb, var(--amber) 42%, transparent)}
 .conv-chip__marker{font-size:9px;text-transform:uppercase;letter-spacing:.06em;opacity:.85}
