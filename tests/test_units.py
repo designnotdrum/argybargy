@@ -328,6 +328,35 @@ def test_drop_room_wakes_a_pending_long_poll(tmp_path):
     assert elapsed < 1.0, "drop_room should wake the waiter well before the 5s deadline"
 
 
+def test_a_listener_that_outlives_drop_room_still_wakes_on_the_next_post(tmp_path):
+    """A room deleted and immediately recreated must not strand its old listener.
+
+    drop_room() pops the room's waiter list; the next reader's setdefault installs a
+    fresh one. A listener that re-arms after that point has to land in the list _wake()
+    actually walks, or it sleeps until its own deadline while messages flow past it.
+    """
+    hub = Hub(MessageStore(tmp_path / "revive.db"))
+
+    async def scenario():
+        started = time.monotonic()
+        listener = asyncio.create_task(hub.read("r", "listener", since=0, wait=5))
+        await asyncio.sleep(0.2)
+        # The room is dropped and a newcomer immediately reinstalls a waiter list,
+        # before the parked listener gets a chance to resume and re-check.
+        hub.drop_room("r")
+        newcomer = asyncio.create_task(hub.read("r", "newcomer", since=0, wait=5))
+        await asyncio.sleep(0.2)
+        await hub.post("r", "bob", "all", "after the churn")
+        msgs, _ = await listener
+        elapsed = time.monotonic() - started
+        await newcomer
+        return msgs, elapsed
+
+    msgs, elapsed = run_async(scenario)
+    assert [m["text"] for m in msgs] == ["after the churn"]
+    assert elapsed < 1.0, "a re-armed listener must be woken by post(), not wait out its deadline"
+
+
 # ---------------------------------------------------------------------- util
 def test_parse_expires_presets():
     now = dt.datetime.now(dt.timezone.utc)
