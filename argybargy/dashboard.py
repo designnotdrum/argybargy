@@ -54,6 +54,27 @@ DASHBOARD_HTML = r"""<!doctype html>
 .conv-preview-strip--tappable{cursor:pointer}
 .conv-preview-strip--tappable:hover{color:var(--muted)}
 .conv-mention-text{color:var(--agent);font-weight:600}
+/* Composer focus treatment: the whole frame (input + chip rail + preview
+   strip + send row) lights up together as one active surface instead of
+   the input alone getting a focus-visible ring. Ring removed on the input
+   specifically; the existing :focus-within border-color rule (minified
+   block above) is left in place and just gets a background added here.
+   A quiet green-tinted wash (the app's existing "active" color, already
+   used for the frame border and the ready-to-send icon) keeps the surface
+   vocabulary intact without inventing a new hue. Kept deliberately subtle
+   (8% mix) so typed text, chip labels, and the preview strip all still
+   clear WCAG AA (4.5:1) in both themes — verified by computing actual
+   sRGB contrast ratios for every token pair, not eyeballed. Placeholder,
+   preview-strip, and chip text are bumped to higher-contrast tokens only
+   while focused, since --faint and the raw --agent hues (over a lightened
+   surface) fall short of 4.5:1 in the light theme otherwise. */
+#composerInput:focus-visible{outline:none}
+.conv-composer__frame{transition:border-color .15s,background-color .15s}
+.conv-composer__frame:focus-within{background:color-mix(in srgb, var(--green) 8%, var(--surface))}
+.conv-composer__frame:focus-within .conv-composer__input::placeholder{color:var(--muted)}
+.conv-composer__frame:focus-within .conv-preview-strip{color:var(--muted)}
+.conv-composer__frame:focus-within .conv-chip{color:color-mix(in srgb, var(--agent, var(--muted)) 70%, var(--text))}
+.conv-composer__frame:focus-within .conv-chip--armed{color:color-mix(in srgb, var(--amber) 70%, var(--text))}
 </style>
 </head>
 <body>
