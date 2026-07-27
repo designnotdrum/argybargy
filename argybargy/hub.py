@@ -120,7 +120,9 @@ class Hub:
 
     async def read(self, room, peer, since, wait):
         deadline = time.monotonic() + max(0.0, wait)
-        waiters = self._waiters.setdefault(room, [])
+        # Register the room up front so the drop_room check below can tell "this room
+        # was never here" apart from "drop_room removed it while we were parked".
+        self._waiters.setdefault(room, [])
         while True:
             msgs = await asyncio.to_thread(self.store.since, room, peer, since)
             if msgs or wait <= 0:
@@ -132,6 +134,10 @@ class Hub:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return [], await asyncio.to_thread(self.store.room_seq, room)
+            # Re-resolve the list every pass: drop_room() may have popped the one we
+            # armed on last iteration, and a newcomer's setdefault installs a fresh
+            # list. Holding the old one strands us in a list _wake() never walks.
+            waiters = self._waiters.setdefault(room, [])
             ev = asyncio.Event()
             waiters.append(ev)
             try:
